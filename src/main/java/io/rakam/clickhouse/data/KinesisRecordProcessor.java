@@ -6,7 +6,6 @@ import com.amazonaws.services.kinesis.clientlibrary.interfaces.IRecordProcessor;
 import com.amazonaws.services.kinesis.clientlibrary.interfaces.IRecordProcessorCheckpointer;
 import com.amazonaws.services.kinesis.clientlibrary.types.ShutdownReason;
 import com.amazonaws.services.kinesis.model.Record;
-import com.facebook.presto.rakam.RetryDriver;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableSet;
 import io.airlift.http.client.HttpClient;
@@ -19,8 +18,8 @@ import io.airlift.http.client.jetty.JettyIoPoolConfig;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
 import io.rakam.clickhouse.BasicMemoryBuffer;
+import io.rakam.clickhouse.RetryDriver;
 import io.rakam.clickhouse.StreamConfig;
-import io.rakam.clickhouse.data.backup.BackupService;
 import org.rakam.util.ProjectCollection;
 
 import javax.ws.rs.core.UriBuilder;

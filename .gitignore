@@ -1,8 +1,8 @@
-rakam-presto/.test/
 .test/
 plugins/*
 _ui/*
 data/*
+var/*
 
 .idea/
 *.iml

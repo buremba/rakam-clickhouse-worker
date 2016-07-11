@@ -1,7 +1,5 @@
 package io.rakam.clickhouse.metastore;
 
-import com.amazonaws.ClientConfiguration;
-import com.amazonaws.services.cloudwatch.AmazonCloudWatchClient;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBStreamsClient;
 import com.amazonaws.services.dynamodbv2.model.DescribeStreamRequest;
@@ -13,18 +11,9 @@ import com.amazonaws.services.dynamodbv2.model.GetShardIteratorResult;
 import com.amazonaws.services.dynamodbv2.model.Record;
 import com.amazonaws.services.dynamodbv2.model.Shard;
 import com.amazonaws.services.dynamodbv2.model.ShardIteratorType;
-import com.amazonaws.services.dynamodbv2.streamsadapter.AmazonDynamoDBStreamsAdapterClient;
-import com.amazonaws.services.kinesis.clientlibrary.exceptions.InvalidStateException;
-import com.amazonaws.services.kinesis.clientlibrary.exceptions.ShutdownException;
-import com.amazonaws.services.kinesis.clientlibrary.lib.worker.InitialPositionInStream;
-import com.amazonaws.services.kinesis.clientlibrary.lib.worker.KinesisClientLibConfiguration;
-import com.amazonaws.services.kinesis.clientlibrary.lib.worker.Worker;
-import com.google.common.base.Throwables;
 import com.google.inject.Inject;
 import io.airlift.http.client.RuntimeIOException;
 import io.airlift.log.Logger;
-import io.rakam.clickhouse.BackupConfig;
-import io.rakam.clickhouse.StreamConfig;
 import io.rakam.clickhouse.data.KinesisRecordProcessor;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
@@ -37,7 +26,6 @@ import org.rakam.util.RakamException;
 
 import javax.annotation.PostConstruct;
 
-import java.rmi.dgc.VMID;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -45,11 +33,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import static com.amazonaws.services.kinesis.metrics.interfaces.MetricsLevel.NONE;
-import static com.amazonaws.services.kinesis.metrics.interfaces.MetricsLevel.SUMMARY;
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.rakam.clickhouse.analysis.ClickHouseMetastore.toClickHouseType;
@@ -61,7 +46,6 @@ public class MetastoreWorkerManager
     private static final Logger logger = Logger.get(KinesisRecordProcessor.class);
 
     private final AmazonDynamoDBClient amazonDynamoDBClient;
-    private final AWSConfig awsConfig;
     private final DynamodbMetastoreConfig metastoreConfig;
     private final ClickHouseConfig config;
     private AmazonDynamoDBStreamsClient streamsClient;
@@ -77,7 +61,6 @@ public class MetastoreWorkerManager
             amazonDynamoDBClient.setEndpoint(awsConfig.getDynamodbEndpoint());
         }
 
-        this.awsConfig = awsConfig;
         this.metastoreConfig = metastoreConfig;
 
         streamsClient =
@@ -92,11 +75,6 @@ public class MetastoreWorkerManager
     @PostConstruct
     public void run()
     {
-        AmazonDynamoDBStreamsAdapterClient adapterClient = new AmazonDynamoDBStreamsAdapterClient(awsConfig.getCredentials(), new ClientConfiguration());
-        if (awsConfig.getDynamodbEndpoint() != null) {
-            adapterClient.setEndpoint(awsConfig.getDynamodbEndpoint());
-        }
-
         String tableArn = amazonDynamoDBClient.describeTable(metastoreConfig.getTableName()).getTable().getLatestStreamArn();
 
         DescribeStreamResult describeStreamResult =
@@ -121,9 +99,10 @@ public class MetastoreWorkerManager
         }
     }
 
-    private void nextResults(String iterator) {
+    private void nextResults(String iterator)
+    {
         String nextIterator = processRecords(iterator);
-        if(nextIterator != null) {
+        if (nextIterator != null) {
             executor.schedule(() -> {
                 nextResults(nextIterator);
             }, 500, MILLISECONDS);
@@ -140,7 +119,8 @@ public class MetastoreWorkerManager
         return getRecordsResult.getNextShardIterator();
     }
 
-    private void process(List<Record> records) {
+    private void process(List<Record> records)
+    {
         Map<ProjectCollection, List<SchemaField>> builder = new HashMap();
         for (Record record : records) {
             String project = record.getDynamodb().getNewImage().get("project").getS();
@@ -153,7 +133,8 @@ public class MetastoreWorkerManager
                     if (!e.getMessage().contains("Code: 44") && !e.getMessage().contains("Code: 57")) {
                         throw e;
                     }
-                } catch (RuntimeIOException e) {
+                }
+                catch (RuntimeIOException e) {
                     System.out.println(1);
                 }
             }
@@ -219,12 +200,12 @@ public class MetastoreWorkerManager
                         catch (Exception e1) {
                             if (!e.getMessage().contains("Code: 44") && !e.getMessage().contains("Code: 57")) {
                                 throw e1;
-                            } else {
+                            }
+                            else {
 //                                logger.warn(e1.getMessage());
                             }
                         }
                     }
-
                 }
                 else {
                     throw e;

@@ -7,7 +7,6 @@ import com.amazonaws.services.kinesis.clientlibrary.interfaces.IRecordProcessorF
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.InitialPositionInStream;
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.KinesisClientLibConfiguration;
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.Worker;
-import com.facebook.presto.rakam.stream.worker.kinesis.KinesisUtil;
 import io.rakam.clickhouse.BackupConfig;
 import io.rakam.clickhouse.StreamConfig;
 import org.rakam.aws.AWSConfig;
