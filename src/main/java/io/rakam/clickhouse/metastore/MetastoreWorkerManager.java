@@ -2,6 +2,7 @@ package io.rakam.clickhouse.metastore;
 
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBStreamsClient;
+import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.DescribeStreamRequest;
 import com.amazonaws.services.dynamodbv2.model.DescribeStreamResult;
 import com.amazonaws.services.dynamodbv2.model.GetRecordsRequest;
@@ -9,8 +10,11 @@ import com.amazonaws.services.dynamodbv2.model.GetRecordsResult;
 import com.amazonaws.services.dynamodbv2.model.GetShardIteratorRequest;
 import com.amazonaws.services.dynamodbv2.model.GetShardIteratorResult;
 import com.amazonaws.services.dynamodbv2.model.Record;
+import com.amazonaws.services.dynamodbv2.model.ScanRequest;
+import com.amazonaws.services.dynamodbv2.model.ScanResult;
 import com.amazonaws.services.dynamodbv2.model.Shard;
 import com.amazonaws.services.dynamodbv2.model.ShardIteratorType;
+import com.amazonaws.services.dynamodbv2.model.TrimmedDataAccessException;
 import com.google.common.base.Charsets;
 import com.google.common.io.Files;
 import com.google.inject.Inject;
@@ -40,6 +44,7 @@ import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -102,6 +107,7 @@ public class MetastoreWorkerManager
         }
         else {
             checkpointFile.createNewFile();
+            processAllBlocking();
         }
 
         DescribeStreamResult describeStreamResult =
@@ -113,18 +119,46 @@ public class MetastoreWorkerManager
         for (Shard shard : shards) {
             String shardId = shard.getShardId();
 
-            GetShardIteratorResult getShardIteratorResult =
-                    streamsClient.getShardIterator(new GetShardIteratorRequest()
-                            .withStreamArn(tableArn)
-                            .withSequenceNumber(sequenceNumber)
-                            .withShardId(shardId)
-                            .withShardIteratorType(ShardIteratorType.LATEST));
+            GetShardIteratorResult getShardIteratorResult;
+            try {
+                getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
+                        .withStreamArn(tableArn)
+                        .withSequenceNumber(sequenceNumber)
+                        .withShardId(shardId)
+                        .withShardIteratorType(ShardIteratorType.AT_SEQUENCE_NUMBER));
+            }
+            catch (TrimmedDataAccessException e) {
+                // the records are trimmed, process all and start from latest.
+                getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
+                        .withStreamArn(tableArn)
+                        .withShardId(shardId)
+                        .withShardIteratorType(ShardIteratorType.LATEST));
+
+                processAllBlocking();
+            }
 
             String iterator = getShardIteratorResult.getShardIterator();
 
             executor.schedule(() -> nextResults(iterator),
                     500, MILLISECONDS);
         }
+    }
+
+    private void processAllBlocking() {
+        Map<String, AttributeValue> lastCheckpoint = null;
+        List<Map<String, AttributeValue>> list = new ArrayList<>();
+        do {
+            ScanResult scan = amazonDynamoDBClient.scan(new ScanRequest()
+                    .withTableName(metastoreConfig.getTableName())
+                    .withConsistentRead(true)
+                    .withExclusiveStartKey(lastCheckpoint));
+
+            list.addAll(scan.getItems());
+
+            lastCheckpoint = scan.getLastEvaluatedKey();
+        } while(lastCheckpoint != null);
+
+        process(list.stream());
     }
 
     private void nextResults(String iterator)
@@ -144,7 +178,8 @@ public class MetastoreWorkerManager
 
         List<Record> records = getRecordsResult.getRecords();
         if (!records.isEmpty()) {
-            process(records);
+            process(records.stream()
+                    .map(e -> e.getDynamodb().getNewImage()));
 
             String sequenceNumber = records.get(records.size() - 1)
                     .getDynamodb()
@@ -174,13 +209,13 @@ public class MetastoreWorkerManager
         return getRecordsResult.getNextShardIterator();
     }
 
-    private void process(List<Record> records)
+    private void process(Stream<Map<String, AttributeValue>> records)
     {
         Map<ProjectCollection, List<SchemaField>> builder = new HashMap();
-        for (Record record : records) {
-            String project = record.getDynamodb().getNewImage().get("project").getS();
+        records.forEach(record -> {
+            String project = record.get("project").getS();
             // new project
-            if (record.getDynamodb().getNewImage().get("id").getS().equals("|")) {
+            if (record.get("id").getS().equals("|")) {
                 try {
                     ClickHouseQueryExecution.runStatement(config, format("CREATE DATABASE %s", project));
                 }
@@ -194,13 +229,13 @@ public class MetastoreWorkerManager
                 }
             }
             else {
-                String collection = record.getDynamodb().getNewImage().get("collection").getS();
-                String name = record.getDynamodb().getNewImage().get("name").getS();
-                String type = record.getDynamodb().getNewImage().get("type").getS();
+                String collection = record.get("collection").getS();
+                String name = record.get("name").getS();
+                String type = record.get("type").getS();
                 builder.computeIfAbsent(new ProjectCollection(project, collection),
                         k -> new ArrayList<>()).add(new SchemaField(name, FieldType.valueOf(type)));
             }
-        }
+        });
 
         for (Map.Entry<ProjectCollection, List<SchemaField>> entry : builder.entrySet()) {
             String queryEnd = entry.getValue().stream()
