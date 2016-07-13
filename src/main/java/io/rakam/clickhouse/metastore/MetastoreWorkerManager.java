@@ -2,7 +2,6 @@ package io.rakam.clickhouse.metastore;
 
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBStreamsClient;
-import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.DescribeStreamRequest;
 import com.amazonaws.services.dynamodbv2.model.DescribeStreamResult;
 import com.amazonaws.services.dynamodbv2.model.GetRecordsRequest;
@@ -10,8 +9,6 @@ import com.amazonaws.services.dynamodbv2.model.GetRecordsResult;
 import com.amazonaws.services.dynamodbv2.model.GetShardIteratorRequest;
 import com.amazonaws.services.dynamodbv2.model.GetShardIteratorResult;
 import com.amazonaws.services.dynamodbv2.model.Record;
-import com.amazonaws.services.dynamodbv2.model.ScanRequest;
-import com.amazonaws.services.dynamodbv2.model.ScanResult;
 import com.amazonaws.services.dynamodbv2.model.Shard;
 import com.amazonaws.services.dynamodbv2.model.ShardIteratorType;
 import com.google.common.base.Charsets;
@@ -40,7 +37,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
@@ -58,13 +54,12 @@ public class MetastoreWorkerManager
     private final AmazonDynamoDBClient amazonDynamoDBClient;
     private final DynamodbMetastoreConfig metastoreConfig;
     private final ClickHouseConfig config;
-    private final BackupConfig backupConfig;
     private AmazonDynamoDBStreamsClient streamsClient;
     private ScheduledExecutorService executor;
     private File checkpointFile;
 
     @Inject
-    public MetastoreWorkerManager(AWSConfig awsConfig, ClickHouseConfig config, BackupConfig backupConfig, DynamodbMetastoreConfig metastoreConfig)
+    public MetastoreWorkerManager(AWSConfig awsConfig, ClickHouseConfig config, DynamodbMetastoreConfig metastoreConfig)
     {
         this.config = config;
         amazonDynamoDBClient = new AmazonDynamoDBClient(awsConfig.getCredentials());
@@ -74,7 +69,6 @@ public class MetastoreWorkerManager
         }
 
         this.metastoreConfig = metastoreConfig;
-        this.backupConfig = backupConfig;
 
         streamsClient =
                 new AmazonDynamoDBStreamsClient(awsConfig.getCredentials());
@@ -90,7 +84,7 @@ public class MetastoreWorkerManager
             throws IOException
     {
         String tableArn = amazonDynamoDBClient.describeTable(metastoreConfig.getTableName()).getTable().getLatestStreamArn();
-        checkpointFile = new File(backupConfig.getDirectory(), "checkpoint");
+        checkpointFile = new File("checkpoint");
 
         String sequenceNumber = null;
         if (checkpointFile.exists()) {
