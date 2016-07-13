@@ -181,7 +181,7 @@ public class MetastoreWorkerManager
             GetShardIteratorResult getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
                     .withStreamArn(tableArn)
                     .withShardId(shardId)
-                    .withShardIteratorType(ShardIteratorType.TRIM_HORIZON));
+                    .withShardIteratorType(ShardIteratorType.LATEST));
 
             executor.schedule(() -> nextResults(tableArn, shardId, getShardIteratorResult.getShardIterator()),
                     500, MILLISECONDS);
@@ -237,6 +237,7 @@ public class MetastoreWorkerManager
             return getRecordsResult.getNextShardIterator();
         }
         catch (ExpiredIteratorException | ResourceNotFoundException e) {
+            logger.error(e);
             return null;
         }
         catch (Exception e) {
