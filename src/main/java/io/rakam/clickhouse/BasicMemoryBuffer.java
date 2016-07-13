@@ -11,9 +11,6 @@ public class BasicMemoryBuffer<T>
 
     private final List<T> buffer;
 
-    private String firstSequenceNumber;
-    private String lastSequenceNumber;
-
     private long previousFlushTimeMillisecond;
 
     public BasicMemoryBuffer(StreamConfig config)
@@ -34,12 +31,8 @@ public class BasicMemoryBuffer<T>
         return millisecondsToBuffer;
     }
 
-    public void consumeRecord(T record, String sequenceNumber)
+    public void consumeRecord(T record)
     {
-        if (buffer.isEmpty()) {
-            firstSequenceNumber = sequenceNumber;
-        }
-        lastSequenceNumber = sequenceNumber;
         buffer.add(record);
     }
 
@@ -47,16 +40,6 @@ public class BasicMemoryBuffer<T>
     {
         buffer.clear();
         previousFlushTimeMillisecond = System.currentTimeMillis();
-    }
-
-    public String getFirstSequenceNumber()
-    {
-        return firstSequenceNumber;
-    }
-
-    public String getLastSequenceNumber()
-    {
-        return lastSequenceNumber;
     }
 
     public boolean shouldFlush()

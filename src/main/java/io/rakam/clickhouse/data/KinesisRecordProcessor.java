@@ -62,16 +62,18 @@ public class KinesisRecordProcessor
     @Override
     public void initialize(String shardId)
     {
+        logger.info("Initialized processor for shard %s", shardId);
     }
 
     @Override
     public void processRecords(List<Record> records, IRecordProcessorCheckpointer checkpointer)
     {
         for (Record record : records) {
-            streamBuffer.consumeRecord(record, record.getSequenceNumber());
+            streamBuffer.consumeRecord(record);
         }
 
         if (streamBuffer.shouldFlush()) {
+            logger.info("Flushing %s records", streamBuffer.getRecords().size());
 
             Map<ProjectCollection, byte[]> pages;
             try {
@@ -80,6 +82,8 @@ public class KinesisRecordProcessor
             catch (IOException e) {
                 throw Throwables.propagate(e);
             }
+
+            streamBuffer.clear();
 
             for (Map.Entry<ProjectCollection, byte[]> entry : pages.entrySet()) {
 

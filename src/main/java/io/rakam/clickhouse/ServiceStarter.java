@@ -1,6 +1,10 @@
 package io.rakam.clickhouse;
 
+import com.getsentry.raven.Raven;
+import com.getsentry.raven.RavenFactory;
+import com.getsentry.raven.jul.SentryHandler;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Binder;
 import com.google.inject.Inject;
@@ -16,13 +20,24 @@ import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
 import org.rakam.server.http.HttpServerBuilder;
 import org.rakam.server.http.HttpService;
+import org.rakam.util.SentryUtil;
 
 import javax.annotation.PostConstruct;
+
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Optional;
+import java.util.logging.LogManager;
+import java.util.stream.Collectors;
 
 import static io.airlift.configuration.ConfigBinder.configBinder;
 
 public class ServiceStarter
 {
+    static {
+        RavenFactory.ravenInstance();
+    }
+
     public static void main(String[] args)
             throws Exception
     {

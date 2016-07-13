@@ -5,11 +5,13 @@ import com.amazonaws.services.dynamodbv2.AmazonDynamoDBStreamsClient;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.DescribeStreamRequest;
 import com.amazonaws.services.dynamodbv2.model.DescribeStreamResult;
+import com.amazonaws.services.dynamodbv2.model.ExpiredIteratorException;
 import com.amazonaws.services.dynamodbv2.model.GetRecordsRequest;
 import com.amazonaws.services.dynamodbv2.model.GetRecordsResult;
 import com.amazonaws.services.dynamodbv2.model.GetShardIteratorRequest;
 import com.amazonaws.services.dynamodbv2.model.GetShardIteratorResult;
 import com.amazonaws.services.dynamodbv2.model.Record;
+import com.amazonaws.services.dynamodbv2.model.ResourceNotFoundException;
 import com.amazonaws.services.dynamodbv2.model.ScanRequest;
 import com.amazonaws.services.dynamodbv2.model.ScanResult;
 import com.amazonaws.services.dynamodbv2.model.Shard;
@@ -21,7 +23,6 @@ import com.google.inject.Inject;
 import io.airlift.http.client.RuntimeIOException;
 import io.airlift.log.Logger;
 import io.rakam.clickhouse.RetryDriver;
-import io.rakam.clickhouse.data.KinesisRecordProcessor;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
@@ -54,7 +55,7 @@ import static org.rakam.util.ValidationUtil.checkTableColumn;
 
 public class MetastoreWorkerManager
 {
-    private static final Logger logger = Logger.get(KinesisRecordProcessor.class);
+    private static final Logger logger = Logger.get(MetastoreWorkerManager.class);
 
     private final AmazonDynamoDBClient amazonDynamoDBClient;
     private final DynamodbMetastoreConfig metastoreConfig;
@@ -118,12 +119,16 @@ public class MetastoreWorkerManager
 
         for (Shard shard : shards) {
             String shardId = shard.getShardId();
+            if (shard.getParentShardId() != null) {
+                continue;
+            }
 
             GetShardIteratorResult getShardIteratorResult;
             try {
                 if (sequenceNumber == null) {
                     throw new TrimmedDataAccessException("File is empty");
                 }
+
                 getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
                         .withStreamArn(tableArn)
                         .withSequenceNumber(sequenceNumber)
@@ -142,7 +147,7 @@ public class MetastoreWorkerManager
 
             String iterator = getShardIteratorResult.getShardIterator();
 
-            executor.schedule(() -> nextResults(iterator),
+            executor.schedule(() -> nextResults(tableArn, shard.getParentShardId(), iterator),
                     500, MILLISECONDS);
         }
     }
@@ -166,14 +171,20 @@ public class MetastoreWorkerManager
         process(list.stream());
     }
 
-    private void nextResults(String iterator)
+    private void nextResults(String tableArn, String shardId, String iterator)
     {
         String nextIterator = processRecords(iterator);
         if (nextIterator != null) {
-            executor.schedule(() -> nextResults(nextIterator), 500, MILLISECONDS);
+            executor.schedule(() -> nextResults(tableArn, shardId, nextIterator), 500, MILLISECONDS);
         }
         else {
-            executor.schedule(() -> nextResults(iterator), 500, MILLISECONDS);
+            GetShardIteratorResult getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
+                    .withStreamArn(tableArn)
+                    .withShardId(shardId)
+                    .withShardIteratorType(ShardIteratorType.TRIM_HORIZON));
+
+            executor.schedule(() -> nextResults(tableArn, shardId, getShardIteratorResult.getShardIterator()),
+                    500, MILLISECONDS);
         }
     }
 
@@ -225,14 +236,18 @@ public class MetastoreWorkerManager
 
             return getRecordsResult.getNextShardIterator();
         }
+        catch (ExpiredIteratorException | ResourceNotFoundException e) {
+            return null;
+        }
         catch (Exception e) {
             logger.error(e);
 
             if (getRecordsResult != null) {
                 return getRecordsResult.getNextShardIterator();
             }
-
-            return null;
+            else {
+                return processRecords(nextItr);
+            }
         }
     }
 
