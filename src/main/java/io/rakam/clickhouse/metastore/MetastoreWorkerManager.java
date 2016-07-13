@@ -15,12 +15,12 @@ import com.amazonaws.services.dynamodbv2.model.ScanResult;
 import com.amazonaws.services.dynamodbv2.model.Shard;
 import com.amazonaws.services.dynamodbv2.model.ShardIteratorType;
 import com.amazonaws.services.dynamodbv2.model.TrimmedDataAccessException;
+import com.facebook.presto.rakam.RetryDriver;
 import com.google.common.base.Charsets;
 import com.google.common.io.Files;
 import com.google.inject.Inject;
 import io.airlift.http.client.RuntimeIOException;
 import io.airlift.log.Logger;
-import io.rakam.clickhouse.BackupConfig;
 import io.rakam.clickhouse.data.KinesisRecordProcessor;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
@@ -101,7 +101,7 @@ public class MetastoreWorkerManager
                 checkpointFile.createNewFile();
             }
             // empty file
-            if(sequenceNumber.isEmpty()) {
+            if (sequenceNumber.isEmpty()) {
                 sequenceNumber = null;
             }
         }
@@ -121,7 +121,7 @@ public class MetastoreWorkerManager
 
             GetShardIteratorResult getShardIteratorResult;
             try {
-                if(sequenceNumber == null) {
+                if (sequenceNumber == null) {
                     throw new TrimmedDataAccessException("File is empty");
                 }
                 getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
@@ -147,7 +147,8 @@ public class MetastoreWorkerManager
         }
     }
 
-    private void processAllBlocking() {
+    private void processAllBlocking()
+    {
         Map<String, AttributeValue> lastCheckpoint = null;
         List<Map<String, AttributeValue>> list = new ArrayList<>();
         do {
@@ -159,7 +160,8 @@ public class MetastoreWorkerManager
             list.addAll(scan.getItems());
 
             lastCheckpoint = scan.getLastEvaluatedKey();
-        } while(lastCheckpoint != null);
+        }
+        while (lastCheckpoint != null);
 
         process(list.stream());
     }
@@ -168,48 +170,70 @@ public class MetastoreWorkerManager
     {
         String nextIterator = processRecords(iterator);
         if (nextIterator != null) {
-            executor.schedule(() -> {
-                nextResults(nextIterator);
-            }, 500, MILLISECONDS);
+            executor.schedule(() -> nextResults(nextIterator), 500, MILLISECONDS);
+        }
+        else {
+            executor.schedule(() -> nextResults(iterator), 500, MILLISECONDS);
         }
     }
 
     private String processRecords(String nextItr)
     {
-        GetRecordsResult getRecordsResult = streamsClient
-                .getRecords(new GetRecordsRequest().withShardIterator(nextItr));
+        GetRecordsResult getRecordsResult = null;
+        try {
+            getRecordsResult = streamsClient
+                    .getRecords(new GetRecordsRequest().withShardIterator(nextItr));
 
-        List<Record> records = getRecordsResult.getRecords();
-        if (!records.isEmpty()) {
-            process(records.stream()
-                    .map(e -> e.getDynamodb().getNewImage()));
-
-            String sequenceNumber = records.get(records.size() - 1)
-                    .getDynamodb()
-                    .getSequenceNumber();
-
-            FileWriter fileWriter = null;
-            try {
-                fileWriter = new FileWriter(checkpointFile, false);
-                fileWriter.write(sequenceNumber);
-            }
-            catch (IOException e) {
-                logger.error(e);
-            } finally {
-                if(fileWriter != null) {
-                    try {
-                        fileWriter.close();
-                    }
-                    catch (IOException e) {
-                        logger.error(e);
-                    }
+            List<Record> records = getRecordsResult.getRecords();
+            if (!records.isEmpty()) {
+                try {
+                    RetryDriver.retry().run("metadata", () -> {
+                        process(records.stream()
+                                .map(e -> e.getDynamodb().getNewImage()));
+                        return null;
+                    });
+                }
+                catch (Exception e) {
+                    logger.error(e);
                 }
 
-                logger.info("Final checkpoint sequence number: %s", sequenceNumber);
-            }
-        }
+                String sequenceNumber = records.get(records.size() - 1)
+                        .getDynamodb()
+                        .getSequenceNumber();
 
-        return getRecordsResult.getNextShardIterator();
+                FileWriter fileWriter = null;
+                try {
+                    fileWriter = new FileWriter(checkpointFile, false);
+                    fileWriter.write(sequenceNumber);
+                }
+                catch (IOException e) {
+                    logger.error(e);
+                }
+                finally {
+                    if (fileWriter != null) {
+                        try {
+                            fileWriter.close();
+                        }
+                        catch (IOException e) {
+                            logger.error(e);
+                        }
+                    }
+
+                    logger.info("Final checkpoint sequence number: %s", sequenceNumber);
+                }
+            }
+
+            return getRecordsResult.getNextShardIterator();
+        }
+        catch (Exception e) {
+            logger.error(e);
+
+            if (getRecordsResult != null) {
+                return getRecordsResult.getNextShardIterator();
+            }
+
+            return null;
+        }
     }
 
     private void process(Stream<Map<String, AttributeValue>> records)
