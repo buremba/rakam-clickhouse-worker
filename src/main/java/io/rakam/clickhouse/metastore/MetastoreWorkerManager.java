@@ -121,6 +121,9 @@ public class MetastoreWorkerManager
 
             GetShardIteratorResult getShardIteratorResult;
             try {
+                if(sequenceNumber == null) {
+                    throw new TrimmedDataAccessException("File is empty");
+                }
                 getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
                         .withStreamArn(tableArn)
                         .withSequenceNumber(sequenceNumber)
