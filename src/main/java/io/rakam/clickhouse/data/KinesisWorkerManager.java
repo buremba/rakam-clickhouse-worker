@@ -10,6 +10,8 @@ import com.amazonaws.services.kinesis.clientlibrary.lib.worker.Worker;
 import io.rakam.clickhouse.BackupConfig;
 import io.rakam.clickhouse.StreamConfig;
 import org.rakam.aws.AWSConfig;
+import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
+import org.rakam.clickhouse.ClickHouseConfig;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
@@ -20,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
 
+import static com.amazonaws.services.kinesis.clientlibrary.lib.worker.InitialPositionInStream.TRIM_HORIZON;
 import static com.amazonaws.services.kinesis.metrics.interfaces.MetricsLevel.NONE;
 import static com.amazonaws.services.kinesis.metrics.interfaces.MetricsLevel.SUMMARY;
 
@@ -30,13 +33,15 @@ public class KinesisWorkerManager
     private final List<Thread> threads;
     private final IRecordProcessorFactory recordProcessorFactory;
     private final BackupConfig backupConfig;
+    private final StreamConfig streamConfig;
 
     @Inject
-    public KinesisWorkerManager(AWSConfig config, BackupConfig backupConfig, StreamConfig streamConfig)
+    public KinesisWorkerManager(AWSConfig config, BackupConfig backupConfig, ClickHouseConfig clickHouseConfig, DynamodbMetastoreConfig metastoreConfig, StreamConfig streamConfig)
     {
         this.config = config;
         this.backupConfig = backupConfig;
         this.threads = new ArrayList<>();
+        this.streamConfig = streamConfig;
         this.kinesisClient = new AmazonKinesisClient(config.getCredentials());
         // SEE: https://github.com/awslabs/amazon-kinesis-client/issues/34
         if (config.getDynamodbEndpoint() == null && config.getKinesisEndpoint() == null) {
@@ -46,7 +51,7 @@ public class KinesisWorkerManager
             kinesisClient.setEndpoint(config.getKinesisEndpoint());
         }
         KinesisUtil.createAndWaitForStreamToBecomeAvailable(kinesisClient, config.getEventStoreStreamName(), 1);
-        this.recordProcessorFactory = () -> new KinesisRecordProcessor(streamConfig);
+        this.recordProcessorFactory = () -> new KinesisRecordProcessor(streamConfig, config, clickHouseConfig, metastoreConfig);
     }
 
     @PostConstruct
@@ -57,35 +62,44 @@ public class KinesisWorkerManager
         threads.add(middlewareWorker);
     }
 
-    private Worker getWorker(IRecordProcessorFactory factory, KinesisClientLibConfiguration config)
+    private Worker getWorker(IRecordProcessorFactory factory, KinesisClientLibConfiguration libConfiguration)
     {
-        AmazonKinesisClient amazonKinesisClient = new AmazonKinesisClient(config.getKinesisCredentialsProvider(),
-                config.getKinesisClientConfiguration());
-        AmazonDynamoDBClient dynamoDBClient = new AmazonDynamoDBClient(config.getDynamoDBCredentialsProvider(),
-                config.getDynamoDBClientConfiguration());
-        if (this.config.getDynamodbEndpoint() != null) {
-            dynamoDBClient.setEndpoint(this.config.getDynamodbEndpoint());
+        AmazonKinesisClient amazonKinesisClient = new AmazonKinesisClient(libConfiguration.getKinesisCredentialsProvider(),
+                libConfiguration.getKinesisClientConfiguration());
+        AmazonDynamoDBClient dynamoDBClient = new AmazonDynamoDBClient(libConfiguration.getDynamoDBCredentialsProvider(),
+                libConfiguration.getDynamoDBClientConfiguration());
+
+        if (config.getDynamodbEndpoint() != null) {
+            dynamoDBClient.setEndpoint(config.getDynamodbEndpoint());
         }
 
-        config.withMetricsLevel(backupConfig.getEnableCloudWatch() ? SUMMARY : NONE);
+        if(config.getKinesisEndpoint() != null) {
+            kinesisClient.setEndpoint(config.getKinesisEndpoint());
+        }
 
-        AmazonCloudWatchClient client = new AmazonCloudWatchClient(config.getCloudWatchCredentialsProvider(),
-                config.getCloudWatchClientConfiguration());
+        dynamoDBClient.setRegion(config.getAWSRegion());
+        amazonKinesisClient.setRegion(config.getAWSRegion());
 
-        return new Worker(factory, config, amazonKinesisClient, dynamoDBClient, client, Executors.newCachedThreadPool());
+        libConfiguration.withMetricsLevel(backupConfig.getEnableCloudWatch() ? SUMMARY : NONE);
+
+        AmazonCloudWatchClient client = new AmazonCloudWatchClient(libConfiguration.getCloudWatchCredentialsProvider(),
+                libConfiguration.getCloudWatchClientConfiguration());
+
+        return new Worker(factory, libConfiguration, amazonKinesisClient, dynamoDBClient, client, Executors.newCachedThreadPool());
     }
 
     private Thread createMiddlewareWorker()
     {
-        KinesisClientLibConfiguration configuration = new KinesisClientLibConfiguration("clickhouse-kinesis-kinesis-consumer",
+        KinesisClientLibConfiguration configuration = new KinesisClientLibConfiguration(streamConfig.getAppName(),
                 config.getEventStoreStreamName(),
-                this.config.getCredentials(),
+                config.getCredentials(),
                 new VMID().toString())
-                .withInitialPositionInStream(InitialPositionInStream.TRIM_HORIZON)
+                .withInitialPositionInStream(TRIM_HORIZON)
                 .withUserAgent("rakam-middleware-consumer")
                 .withCallProcessRecordsEvenForEmptyRecordList(true);
-        if (this.config.getKinesisEndpoint() == null & this.config.getDynamodbEndpoint() == null) {
-            configuration.withRegionName(this.config.getRegion());
+
+        if (this.config.getKinesisEndpoint() == null && this.config.getDynamodbEndpoint() == null) {
+            configuration.withRegionName(config.getRegion());
         }
 
         if (config.getKinesisEndpoint() != null) {

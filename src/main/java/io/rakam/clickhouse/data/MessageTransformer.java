@@ -4,44 +4,41 @@ import com.amazonaws.services.kinesis.model.Record;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
-import com.google.common.collect.HashBasedTable;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Table;
 import com.google.common.eventbus.EventBus;
-import com.google.common.io.ByteArrayDataOutput;
-import com.google.common.io.ByteStreams;
 import com.google.common.io.LittleEndianDataInputStream;
-import org.rakam.clickhouse.ClickHouseConfig;
-import org.rakam.clickhouse.analysis.ClickHouseMetastore;
-import org.rakam.clickhouse.collection.ClickHouseEventStore;
+import com.google.common.io.LittleEndianDataOutputStream;
+import org.rakam.aws.AWSConfig;
+import org.rakam.aws.dynamodb.metastore.DynamodbMetastore;
+import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.collection.FieldDependencyBuilder;
 import org.rakam.collection.SchemaField;
 import org.rakam.util.ProjectCollection;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.DataOutput;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.rakam.clickhouse.analysis.ClickHouseQueryExecution.readVarInt;
+import static org.rakam.clickhouse.collection.ClickHouseEventStore.writeValue;
 
 public class MessageTransformer
 {
     private final LoadingCache<ProjectCollection, List<SchemaField>> schemaCache;
 
-    public MessageTransformer()
+    public MessageTransformer(AWSConfig awsConfig, DynamodbMetastoreConfig metastoreConfig)
     {
-        ClickHouseMetastore clickHouseMetastore = new ClickHouseMetastore(new ClickHouseConfig(),
-                new FieldDependencyBuilder.FieldDependency(ImmutableSet.of(), ImmutableMap.of()), new EventBus());
+        DynamodbMetastore clickHouseMetastore = new DynamodbMetastore(awsConfig, metastoreConfig,
+                new FieldDependencyBuilder().build(), new EventBus());
 
-        schemaCache = CacheBuilder.newBuilder().build(new CacheLoader<ProjectCollection, List<SchemaField>>() {
+        schemaCache = CacheBuilder.newBuilder().expireAfterWrite(0, TimeUnit.MICROSECONDS).build(new CacheLoader<ProjectCollection, List<SchemaField>>()
+        {
             @Override
             public List<SchemaField> load(ProjectCollection key)
                     throws Exception
@@ -51,36 +48,40 @@ public class MessageTransformer
         });
     }
 
-    public Map<ProjectCollection, byte[]> convert(List<Record> records) throws IOException
+    public Map<ProjectCollection, Map.Entry<List<SchemaField>, ZeroCopyByteArrayOutputStream>> convert(List<Record> records)
+            throws IOException
     {
-        Map<ProjectCollection, ByteArrayDataOutput> table = new HashMap<>();
+        Map<ProjectCollection, ByteArrayBackedLittleEndianDataOutputStream> table = new HashMap<>();
 
         for (Record record : records) {
             ProjectCollection collection = extractCollection(record);
             byte[] data = getData(record);
-            LittleEndianDataInputStream in = new LittleEndianDataInputStream(new ByteArrayInputStream(data));
-            int fieldCount = readVarInt(in);
+            ByteArrayInputStream in = new ByteArrayInputStream(data);
+            LittleEndianDataInputStream input = new LittleEndianDataInputStream(in);
+            int fieldCount = readVarInt(input);
 
-            ByteArrayDataOutput output = table.get(collection);
-            if(output == null) {
-                ByteArrayOutputStream out = new ByteArrayOutputStream(records.size() * 100);
-                output = ByteStreams.newDataOutput(out);
+            ByteArrayBackedLittleEndianDataOutputStream output = table.get(collection);
+            if (output == null) {
+                ZeroCopyByteArrayOutputStream out = new ZeroCopyByteArrayOutputStream(records.size() * 100);
+                output = new ByteArrayBackedLittleEndianDataOutputStream(out);
                 table.put(collection, output);
             }
 
             List<SchemaField> fields = schemaCache.getUnchecked(collection);
-            output.write(data);
+            output.write(data, data.length - in.available(), in.available());
 
-            if(fieldCount < fields.size()) {
+            if (fieldCount < fields.size()) {
                 for (int i = fieldCount; i < fields.size(); i++) {
-                    ClickHouseEventStore.writeValue(null, fields.get(i).getType(), output);
+                    writeValue(null, fields.get(i).getType(), output);
                 }
             }
         }
 
         return table.entrySet().stream().collect(Collectors.toMap(
                 e -> e.getKey(),
-                e -> e.getValue().toByteArray()));
+                e -> new SimpleImmutableEntry<>(
+                        schemaCache.getUnchecked(e.getKey()),
+                        e.getValue().getUnderlyingOutputStream())));
     }
 
     public ProjectCollection extractCollection(Record message)
@@ -96,5 +97,38 @@ public class MessageTransformer
     {
         ByteBuffer data = record.getData();
         return data.array();
+    }
+
+    public static class ZeroCopyByteArrayOutputStream
+            extends ByteArrayOutputStream
+    {
+
+        public ZeroCopyByteArrayOutputStream(int size)
+        {
+            super(size);
+        }
+
+        public byte[] getUnderlyingArray()
+        {
+            return buf;
+        }
+    }
+
+    public static class ByteArrayBackedLittleEndianDataOutputStream
+            extends LittleEndianDataOutputStream
+    {
+
+        private final ZeroCopyByteArrayOutputStream thisOut;
+
+        public ByteArrayBackedLittleEndianDataOutputStream(ZeroCopyByteArrayOutputStream out)
+        {
+            super(out);
+            this.thisOut = out;
+        }
+
+        public ZeroCopyByteArrayOutputStream getUnderlyingOutputStream()
+        {
+            return thisOut;
+        }
     }
 }

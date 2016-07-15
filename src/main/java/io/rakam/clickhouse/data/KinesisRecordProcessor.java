@@ -20,7 +20,15 @@ import io.airlift.units.Duration;
 import io.rakam.clickhouse.BasicMemoryBuffer;
 import io.rakam.clickhouse.RetryDriver;
 import io.rakam.clickhouse.StreamConfig;
+import io.rakam.clickhouse.metastore.MetastoreWorkerManager;
+import org.apache.bval.model.MetaBean;
+import org.rakam.aws.AWSConfig;
+import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
+import org.rakam.clickhouse.ClickHouseConfig;
+import org.rakam.clickhouse.analysis.ClickHouseQueryExecution;
+import org.rakam.collection.SchemaField;
 import org.rakam.util.ProjectCollection;
+import org.rakam.util.ValidationUtil;
 
 import javax.ws.rs.core.UriBuilder;
 
@@ -32,13 +40,16 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 import static io.airlift.http.client.StringResponseHandler.createStringResponseHandler;
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.rakam.clickhouse.analysis.ClickHouseMetastore.toClickHouseType;
 import static org.rakam.clickhouse.analysis.ClickHouseQueryExecution.getSystemSocksProxy;
 import static org.rakam.util.ValidationUtil.checkCollection;
+import static org.rakam.util.ValidationUtil.checkTableColumn;
 
 public class KinesisRecordProcessor
         implements IRecordProcessor
@@ -52,11 +63,13 @@ public class KinesisRecordProcessor
 
     private final BasicMemoryBuffer streamBuffer;
     private final MessageTransformer context;
+    private final ClickHouseConfig config;
 
-    public KinesisRecordProcessor(StreamConfig streamConfig)
+    public KinesisRecordProcessor(StreamConfig streamConfig, AWSConfig awsConfig, ClickHouseConfig config, DynamodbMetastoreConfig metastoreConfig)
     {
         this.streamBuffer = new BasicMemoryBuffer(streamConfig);
-        context = new MessageTransformer();
+        context = new MessageTransformer(awsConfig, metastoreConfig);
+        this.config = config;
     }
 
     @Override
@@ -73,54 +86,57 @@ public class KinesisRecordProcessor
         }
 
         if (streamBuffer.shouldFlush()) {
-            logger.info("Flushing %s records", streamBuffer.getRecords().size());
+            synchronized (this) {
+                logger.info("Flushing %s records", streamBuffer.getRecords().size());
 
-            Map<ProjectCollection, byte[]> pages;
-            try {
-                pages = context.convert(streamBuffer.getRecords());
-            }
-            catch (IOException e) {
-                throw Throwables.propagate(e);
-            }
+                Map<ProjectCollection, Map.Entry<List<SchemaField>, MessageTransformer.ZeroCopyByteArrayOutputStream>> pages;
+                try {
+                    pages = context.convert(streamBuffer.getRecords());
+                }
+                catch (IOException e) {
+                    throw Throwables.propagate(e);
+                }
 
-            streamBuffer.clear();
+                streamBuffer.clear();
 
-            for (Map.Entry<ProjectCollection, byte[]> entry : pages.entrySet()) {
+                for (Map.Entry<ProjectCollection, Map.Entry<List<SchemaField>, MessageTransformer.ZeroCopyByteArrayOutputStream>> entry : pages.entrySet()) {
+                    try {
+                        RetryDriver.retry()
+                                .run("insert", (Callable<Void>) () -> {
+                                    CompletableFuture<Void> future = new CompletableFuture<>();
+                                    executeRequest(entry.getKey(), entry.getValue().getKey(), entry.getValue().getValue(), future);
+                                    future.join();
+                                    return null;
+                                });
+                    }
+                    catch (Exception e) {
+                        logger.error(e);
+                    }
+                }
 
                 try {
-                    RetryDriver.retry()
-                            .run("insert", (Callable<Void>) () -> {
-                                CompletableFuture<Void> future = new CompletableFuture<>();
-                                executeRequest(entry.getKey(), entry.getValue(), future);
-                                future.join();
-                                return null;
-                            });
+                    checkpointer.checkpoint();
                 }
-                catch (Exception e) {
-                    logger.error(e);
+                catch (InvalidStateException | ShutdownException e) {
+                    throw Throwables.propagate(e);
                 }
-            }
-
-            try {
-                checkpointer.checkpoint();
-            }
-            catch (InvalidStateException | ShutdownException e) {
-                throw Throwables.propagate(e);
             }
         }
     }
 
-    private void executeRequest(ProjectCollection key, byte[] value, CompletableFuture<Void> future)
+    private void executeRequest(ProjectCollection key, List<SchemaField> fields, MessageTransformer.ZeroCopyByteArrayOutputStream value, CompletableFuture<Void> future)
     {
+        String columns = fields.stream().map(e -> checkTableColumn(e.getName(), '`')).collect(Collectors.joining(", "));
+
         URI uri = UriBuilder
                 .fromPath("/").scheme("http").host("127.0.0.1").port(8123)
-                .queryParam("query", format("INSERT INTO %s.%s FORMAT RowBinary",
-                        key.project, checkCollection(key.collection, '`'))).build();
+                .queryParam("query", format("INSERT INTO %s.%s (`$date`, %s) FORMAT RowBinary",
+                        key.project, checkCollection(key.collection, '`'), columns)).build();
 
         HttpClient.HttpResponseFuture<StringResponseHandler.StringResponse> f = HTTP_CLIENT.executeAsync(Request.builder()
                 .setUri(uri)
                 .setMethod("POST")
-                .setBodyGenerator(out -> out.write(value))
+                .setBodyGenerator(out -> out.write(value.getUnderlyingArray(), 0, value.size()))
                 .build(), createStringResponseHandler());
 
         f.addListener(() -> {
@@ -130,9 +146,25 @@ public class KinesisRecordProcessor
                     future.complete(null);
                 }
                 else {
-                    RuntimeException ex = new RuntimeException(stringResponse.getStatusMessage() + " : "
-                            + stringResponse.getBody().split("\n", 2)[0]);
-                    future.completeExceptionally(ex);
+                    boolean tableMissing = stringResponse.getBody().contains("Code: 60");
+                    boolean columnMissing = stringResponse.getBody().contains("Code: 16");
+                    if (tableMissing || columnMissing) {
+                        List<SchemaField> missingColumns = new ClickHouseQueryExecution(config,
+                                String.format("SELECT name FROM system.columns WHERE database = '%s' AND table = '%s'", key.project,
+                                        ValidationUtil.checkLiteral(key.collection))).getResult().join().getResult().stream()
+                                .map(e -> e.get(0).toString())
+                                .filter(e -> fields.stream().noneMatch(a -> a.getName().equals(e)))
+                                .map(e -> fields.stream().filter(a -> a.getName().equals(e)).findAny().get())
+                                .collect(Collectors.toList());
+
+                        MetastoreWorkerManager.alterTable(config, key, missingColumns);
+                        executeRequest(key, fields, value, future);
+                    }
+                    else {
+                        RuntimeException ex = new RuntimeException(stringResponse.getStatusMessage() + " : "
+                                + stringResponse.getBody().split("\n", 2)[0]);
+                        future.completeExceptionally(ex);
+                    }
                 }
             }
             catch (InterruptedException | ExecutionException | TimeoutException e) {

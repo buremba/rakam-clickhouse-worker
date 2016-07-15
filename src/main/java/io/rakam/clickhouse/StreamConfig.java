@@ -11,7 +11,7 @@ public class StreamConfig
 {
     private Duration maxFlushDuration = Duration.ofSeconds(5);
     private int maxFlushRecords = 50_000;
-    private String appName;
+    private String appName = "consumer";
 
     @Config("stream.max-flush-duration")
     public void setMaxFlushDuration(Duration maxFlushDuration)
@@ -19,7 +19,7 @@ public class StreamConfig
         this.maxFlushDuration = maxFlushDuration;
     }
 
-    @Config("metastore.adapter.dynamodb.app_name")
+    @Config("event.store.kinesis.app_name")
     public void setAppName(String appName)
     {
         this.appName = appName;

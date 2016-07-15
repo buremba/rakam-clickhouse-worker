@@ -265,20 +265,20 @@ public class ClickhouseClusterShardManager
 
         ObjectListing listing = amazonS3Client.listObjects(backupConfig.getBucket(), node);
 
-        listing.getObjectSummaries().stream().map(this::extractPart)
+        listing.getObjectSummaries().stream().map(e -> extractPart(backupConfig, e))
                 .forEach(parts::add);
 
         while (listing.isTruncated()) {
             listing = amazonS3Client.listNextBatchOfObjects(listing);
 
-            listing.getObjectSummaries().stream().map(this::extractPart)
+            listing.getObjectSummaries().stream().map(e -> extractPart(backupConfig, e))
                     .forEach(parts::add);
         }
 
         return parts;
     }
 
-    private Part extractPart(S3ObjectSummary summary)
+    public static Part extractPart(BackupConfig backupConfig, S3ObjectSummary summary)
     {
         String[] parts = summary.getKey().split("/", 4);
         String database = parts[1];

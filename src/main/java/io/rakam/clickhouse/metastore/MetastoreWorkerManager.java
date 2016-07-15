@@ -16,9 +16,7 @@ import com.amazonaws.services.dynamodbv2.model.ScanRequest;
 import com.amazonaws.services.dynamodbv2.model.ScanResult;
 import com.amazonaws.services.dynamodbv2.model.Shard;
 import com.amazonaws.services.dynamodbv2.model.ShardIteratorType;
-import com.amazonaws.services.dynamodbv2.model.TrimmedDataAccessException;
-import com.google.common.base.Charsets;
-import com.google.common.io.Files;
+import com.facebook.presto.hadoop.$internal.com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import io.airlift.http.client.RuntimeIOException;
 import io.airlift.log.Logger;
@@ -34,21 +32,24 @@ import org.rakam.util.RakamException;
 
 import javax.annotation.PostConstruct;
 
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static com.amazonaws.services.dynamodbv2.model.ShardIteratorType.LATEST;
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.rakam.clickhouse.analysis.ClickHouseMetastore.toClickHouseType;
 import static org.rakam.util.ValidationUtil.checkCollection;
 import static org.rakam.util.ValidationUtil.checkTableColumn;
@@ -60,9 +61,10 @@ public class MetastoreWorkerManager
     private final AmazonDynamoDBClient amazonDynamoDBClient;
     private final DynamodbMetastoreConfig metastoreConfig;
     private final ClickHouseConfig config;
+    private final Set<String> activeShards;
+    private String tableArn;
     private AmazonDynamoDBStreamsClient streamsClient;
     private ScheduledExecutorService executor;
-    private File checkpointFile;
 
     @Inject
     public MetastoreWorkerManager(AWSConfig awsConfig, ClickHouseConfig config, DynamodbMetastoreConfig metastoreConfig)
@@ -74,6 +76,8 @@ public class MetastoreWorkerManager
             amazonDynamoDBClient.setEndpoint(awsConfig.getDynamodbEndpoint());
         }
 
+        amazonDynamoDBClient.setRegion(awsConfig.getAWSRegion());
+
         this.metastoreConfig = metastoreConfig;
 
         streamsClient =
@@ -82,6 +86,7 @@ public class MetastoreWorkerManager
             streamsClient.setEndpoint(awsConfig.getDynamodbEndpoint());
         }
 
+        activeShards = new ConcurrentSkipListSet<>();
         executor = Executors.newSingleThreadScheduledExecutor();
     }
 
@@ -89,28 +94,17 @@ public class MetastoreWorkerManager
     public void run()
             throws IOException
     {
-        String tableArn = amazonDynamoDBClient.describeTable(metastoreConfig.getTableName()).getTable().getLatestStreamArn();
-        checkpointFile = new File("checkpoint");
+        tableArn = amazonDynamoDBClient.describeTable(metastoreConfig.getTableName())
+                .getTable().getLatestStreamArn();
 
-        String sequenceNumber = null;
-        if (checkpointFile.exists()) {
-            try {
-                sequenceNumber = Files.toString(checkpointFile, Charsets.UTF_8);
-            }
-            catch (IOException e) {
-                checkpointFile.delete();
-                checkpointFile.createNewFile();
-            }
-            // empty file
-            if (sequenceNumber.isEmpty()) {
-                sequenceNumber = null;
-            }
-        }
-        else {
-            checkpointFile.createNewFile();
-            processAllBlocking();
-        }
+        discoverShards();
+        executor.scheduleAtFixedRate(this::discoverShards, 30, 30, SECONDS);
 
+        processAllBlocking();
+    }
+
+    private void discoverShards()
+    {
         DescribeStreamResult describeStreamResult =
                 streamsClient.describeStream(new DescribeStreamRequest()
                         .withStreamArn(tableArn));
@@ -118,36 +112,21 @@ public class MetastoreWorkerManager
                 describeStreamResult.getStreamDescription().getShards();
 
         for (Shard shard : shards) {
-            String shardId = shard.getShardId();
-            if (shard.getParentShardId() != null) {
+            if (activeShards.contains(shard)) {
                 continue;
             }
+            String shardId = shard.getShardId();
 
-            GetShardIteratorResult getShardIteratorResult;
-            try {
-                if (sequenceNumber == null) {
-                    throw new TrimmedDataAccessException("File is empty");
-                }
+            GetShardIteratorResult getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
+                    .withStreamArn(tableArn)
+                    .withShardId(shardId)
+                    .withShardIteratorType(LATEST));
 
-                getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
-                        .withStreamArn(tableArn)
-                        .withSequenceNumber(sequenceNumber)
-                        .withShardId(shardId)
-                        .withShardIteratorType(ShardIteratorType.AT_SEQUENCE_NUMBER));
-            }
-            catch (TrimmedDataAccessException e) {
-                // the records are trimmed, process all and start from latest.
-                getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
-                        .withStreamArn(tableArn)
-                        .withShardId(shardId)
-                        .withShardIteratorType(ShardIteratorType.LATEST));
-
-                processAllBlocking();
-            }
+            processAllBlocking();
 
             String iterator = getShardIteratorResult.getShardIterator();
 
-            executor.schedule(() -> nextResults(tableArn, shard.getParentShardId(), iterator),
+            executor.schedule(() -> nextResults(shard.getShardId(), iterator),
                     500, MILLISECONDS);
         }
     }
@@ -168,23 +147,64 @@ public class MetastoreWorkerManager
         }
         while (lastCheckpoint != null);
 
-        process(list.stream());
+        List<String> databases = new ClickHouseQueryExecution(config, "SELECT name FROM system.databases").getResult().join()
+                .getResult().stream().map(e -> e.get(0).toString())
+                .collect(Collectors.toList());
+
+        Map<ProjectCollection, List<SchemaField>> columns = new HashMap<>();
+        for (Map<String, AttributeValue> record : list) {
+            String project = record.get("project").getS();
+
+            if (record.get("id").getS().equals("|")) {
+                if (!databases.contains(project)) {
+                    process(Stream.of(record));
+                }
+            }
+            else {
+                String collection = record.get("collection").getS();
+                String name = record.get("name").getS();
+                String type = record.get("type").getS();
+                columns.computeIfAbsent(new ProjectCollection(project, collection),
+                        k -> new ArrayList<>())
+                        .add(new SchemaField(name, FieldType.valueOf(type)));
+            }
+        }
+
+        for (List<Object> column : new ClickHouseQueryExecution(config, "SELECT database, table, name FROM system.columns").getResult().join().getResult()) {
+            String database = column.get(0).toString();
+            String table = column.get(1).toString();
+            String columnName = column.get(2).toString();
+            List<SchemaField> fields = columns.get(new ProjectCollection(database, table));
+
+            if (fields != null) {
+                fields.removeIf(field -> field.getName().equals(columnName));
+            }
+        }
+
+        List<Map<String, AttributeValue>> objects = new ArrayList<>();
+        for (Map.Entry<ProjectCollection, List<SchemaField>> entry : columns.entrySet()) {
+
+            for (SchemaField field : entry.getValue()) {
+                objects.add(ImmutableMap.of(
+                        "project", new AttributeValue(entry.getKey().project),
+                        "id", new AttributeValue(""),
+                        "collection", new AttributeValue(entry.getKey().collection),
+                        "name", new AttributeValue(field.getName()),
+                        "type", new AttributeValue(field.getType().toString())));
+            }
+        }
+
+        process(objects.stream());
     }
 
-    private void nextResults(String tableArn, String shardId, String iterator)
+    private void nextResults(String shardId, String iterator)
     {
         String nextIterator = processRecords(iterator);
         if (nextIterator != null) {
-            executor.schedule(() -> nextResults(tableArn, shardId, nextIterator), 500, MILLISECONDS);
+            executor.schedule(() -> nextResults(shardId, nextIterator), 500, MILLISECONDS);
         }
         else {
-            GetShardIteratorResult getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
-                    .withStreamArn(tableArn)
-                    .withShardId(shardId)
-                    .withShardIteratorType(ShardIteratorType.LATEST));
-
-            executor.schedule(() -> nextResults(tableArn, shardId, getShardIteratorResult.getShardIterator()),
-                    500, MILLISECONDS);
+            activeShards.remove(shardId);
         }
     }
 
@@ -207,38 +227,9 @@ public class MetastoreWorkerManager
                 catch (Exception e) {
                     logger.error(e);
                 }
-
-                String sequenceNumber = records.get(records.size() - 1)
-                        .getDynamodb()
-                        .getSequenceNumber();
-
-                FileWriter fileWriter = null;
-                try {
-                    fileWriter = new FileWriter(checkpointFile, false);
-                    fileWriter.write(sequenceNumber);
-                }
-                catch (IOException e) {
-                    logger.error(e);
-                }
-                finally {
-                    if (fileWriter != null) {
-                        try {
-                            fileWriter.close();
-                        }
-                        catch (IOException e) {
-                            logger.error(e);
-                        }
-                    }
-
-                    logger.info("Final checkpoint sequence number: %s", sequenceNumber);
-                }
             }
 
             return getRecordsResult.getNextShardIterator();
-        }
-        catch (ExpiredIteratorException | ResourceNotFoundException e) {
-            logger.error(e);
-            return null;
         }
         catch (Exception e) {
             logger.error(e);
@@ -247,7 +238,85 @@ public class MetastoreWorkerManager
                 return getRecordsResult.getNextShardIterator();
             }
             else {
-                return processRecords(nextItr);
+                return null;
+            }
+        }
+    }
+
+    public static void create(ClickHouseConfig config, String project)
+    {
+        try {
+            ClickHouseQueryExecution.runStatement(config, format("CREATE DATABASE %s", project));
+        }
+        catch (RakamException e) {
+            if (!e.getMessage().contains("Code: 82")) {
+                throw e;
+            }
+        }
+        catch (RuntimeIOException e) {
+            logger.error(e);
+        }
+    }
+
+    public static void alterTable(ClickHouseConfig config, ProjectCollection collection, List<SchemaField> value)
+    {
+        String queryEnd = value.stream()
+                .map(f -> format("%s %s", checkTableColumn(f.getName(), '`'), toClickHouseType(f.getType())))
+                .collect(Collectors.joining(", "));
+
+        boolean timeActive = value.stream().anyMatch(f -> f.getName().equals("_time") && f.getType() == FieldType.TIMESTAMP);
+        if (!timeActive) {
+            queryEnd += ", _time DateTime";
+        }
+
+        Optional<SchemaField> userColumn = value.stream().filter(f -> f.getName().equals("_user")).findAny();
+
+        String properties;
+        if (userColumn.isPresent()) {
+            String hashFunction = userColumn.get().getType().isNumeric() ? "intHash32" : "cityHash64";
+            properties = format("ENGINE = MergeTree(`$date`, %s(_user), (`$date`, %s(_user)), 8192)", hashFunction, hashFunction);
+        }
+        else {
+            properties = "ENGINE = MergeTree(`$date`, (`$date`), 8192)";
+        }
+
+        String internalTableCreateQuery = format("CREATE TABLE %s.%s (`$date` Date, %s) %s ",
+                collection.project, checkCollection("$local_" + collection.collection, '`'), queryEnd, properties);
+
+        String distributedTableCreateQuery = format("CREATE TABLE %s.%s AS %s.%s ENGINE = Distributed(servers, %s, %s, %s)",
+                collection.project, checkCollection(collection.collection, '`'),
+                collection.project, checkCollection("$local_" + collection.collection, '`'),
+                collection.project, checkCollection("$local_" + collection.collection, '`'),
+                userColumn.isPresent() ? userColumn.get().getName() : "rand()");
+
+        try {
+            ClickHouseQueryExecution.runStatement(config, internalTableCreateQuery);
+            ClickHouseQueryExecution.runStatement(config, distributedTableCreateQuery);
+        }
+        catch (RakamException e) {
+            if (e.getMessage().contains("Code: 44") || e.getMessage().contains("Code: 57")) {
+                for (SchemaField field : value) {
+                    queryEnd = format("ADD COLUMN %s %s", checkTableColumn(field.getName(), '`'),
+                            toClickHouseType(field.getType()));
+
+                    String alterQueryInternalTable = format("ALTER TABLE %s.%s %s",
+                            collection.project, checkCollection("$local_" + collection.collection, '`'), queryEnd);
+                    String alterQueryDistributedTable = format("ALTER TABLE %s.%s %s",
+                            collection.project, checkCollection(collection.collection, '`'), queryEnd);
+
+                    try {
+                        ClickHouseQueryExecution.runStatement(config, alterQueryInternalTable);
+                        ClickHouseQueryExecution.runStatement(config, alterQueryDistributedTable);
+                    }
+                    catch (Exception e1) {
+                        if (!e.getMessage().contains("Code: 44") && !e.getMessage().contains("Code: 57")) {
+                            throw e1;
+                        }
+                    }
+                }
+            }
+            else {
+                throw e;
             }
         }
     }
@@ -259,17 +328,7 @@ public class MetastoreWorkerManager
             String project = record.get("project").getS();
             // new project
             if (record.get("id").getS().equals("|")) {
-                try {
-                    ClickHouseQueryExecution.runStatement(config, format("CREATE DATABASE %s", project));
-                }
-                catch (RakamException e) {
-                    if (!e.getMessage().contains("Code: 82")) {
-                        throw e;
-                    }
-                }
-                catch (RuntimeIOException e) {
-                    logger.error(e);
-                }
+                create(config, project);
             }
             else {
                 String collection = record.get("collection").getS();
@@ -281,66 +340,7 @@ public class MetastoreWorkerManager
         });
 
         for (Map.Entry<ProjectCollection, List<SchemaField>> entry : builder.entrySet()) {
-            String queryEnd = entry.getValue().stream()
-                    .map(f -> format("%s %s", checkTableColumn(f.getName(), '`'), toClickHouseType(f.getType())))
-                    .collect(Collectors.joining(", "));
-
-            boolean timeActive = entry.getValue().stream().anyMatch(f -> f.getName().equals("_time") && f.getType() == FieldType.TIMESTAMP);
-            if (!timeActive) {
-                queryEnd += ", _time DateTime";
-            }
-
-            Optional<SchemaField> userColumn = entry.getValue().stream().filter(f -> f.getName().equals("_user")).findAny();
-
-            String properties;
-            if (userColumn.isPresent()) {
-                String hashFunction = userColumn.get().getType().isNumeric() ? "intHash32" : "cityHash64";
-                properties = format("ENGINE = MergeTree(`$date`, %s(_user), (`$date`, %s(_user)), 8192)", hashFunction, hashFunction);
-            }
-            else {
-                properties = "ENGINE = MergeTree(`$date`, (`$date`), 8192)";
-            }
-
-            ProjectCollection collection = entry.getKey();
-            String internalTableCreateQuery = format("CREATE TABLE %s.%s (`$date` Date, %s) %s ",
-                    collection.project, checkCollection("$local_" + collection.collection, '`'), queryEnd, properties);
-
-            String distributedTableCreateQuery = format("CREATE TABLE %s.%s AS %s.%s ENGINE = Distributed(servers, %s, %s, %s)",
-                    collection.project, checkCollection(collection.collection, '`'),
-                    collection.project, checkCollection("$local_" + collection.collection, '`'),
-                    collection.project, checkCollection("$local_" + collection.collection, '`'),
-                    userColumn.isPresent() ? userColumn.get().getName() : "rand()");
-
-            try {
-                ClickHouseQueryExecution.runStatement(config, internalTableCreateQuery);
-                ClickHouseQueryExecution.runStatement(config, distributedTableCreateQuery);
-            }
-            catch (RakamException e) {
-                if (e.getMessage().contains("Code: 44") || e.getMessage().contains("Code: 57")) {
-                    for (SchemaField field : entry.getValue()) {
-                        queryEnd = format("ADD COLUMN %s %s", checkTableColumn(field.getName(), '`'),
-                                toClickHouseType(field.getType()));
-
-                        String alterQueryInternalTable = format("ALTER TABLE %s.%s %s",
-                                collection.project, checkCollection("$local_" + collection.collection, '`'), queryEnd);
-                        String alterQueryDistributedTable = format("ALTER TABLE %s.%s %s",
-                                collection.project, checkCollection(collection.collection, '`'), queryEnd);
-
-                        try {
-                            ClickHouseQueryExecution.runStatement(config, alterQueryInternalTable);
-                            ClickHouseQueryExecution.runStatement(config, alterQueryDistributedTable);
-                        }
-                        catch (Exception e1) {
-                            if (!e.getMessage().contains("Code: 44") && !e.getMessage().contains("Code: 57")) {
-                                throw e1;
-                            }
-                        }
-                    }
-                }
-                else {
-                    throw e;
-                }
-            }
+            alterTable(config, entry.getKey(), entry.getValue());
         }
     }
 }

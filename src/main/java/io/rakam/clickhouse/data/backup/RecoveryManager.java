@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
+import static io.rakam.clickhouse.data.ClickhouseClusterShardManager.extractPart;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class RecoveryManager
@@ -70,13 +71,13 @@ public class RecoveryManager
 
         List<Part> parts = new ArrayList<>();
 
-        listing.getObjectSummaries().stream().map(this::extractPart)
+        listing.getObjectSummaries().stream().map(e -> extractPart(backupConfig, e))
                 .forEach(parts::add);
 
         while (listing.isTruncated()) {
             listing = amazonS3Client.listNextBatchOfObjects(listing);
 
-            listing.getObjectSummaries().stream().map(this::extractPart)
+            listing.getObjectSummaries().stream().map(e -> extractPart(backupConfig, e))
                     .forEach(parts::add);
         }
 
@@ -97,15 +98,6 @@ public class RecoveryManager
         backupService.createNewParts(missingParts.iterator());
 
         parts.forEach(this::recoverPartIfNotExists);
-    }
-
-    private Part extractPart(S3ObjectSummary summary)
-    {
-        String[] parts = summary.getKey().split("/", 4);
-        String database = parts[1];
-        String table = new String(Base64.getDecoder().decode(parts[2]), UTF_8);
-        String part = parts[3];
-        return new Part(backupConfig.getIdentifier(), database, table, part);
     }
 
     private void recoverPartIfNotExists(Part summary)
