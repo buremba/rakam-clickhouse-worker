@@ -53,7 +53,7 @@ public class ServiceStarter
         });
 
         bootstrap.strictConfig().initialize();
-        logger.info("------ SERVICE STARTED ------");
+        logger.error("------ SERVICE STARTED ------");
     }
 
     private static class ShardHttpServer
