@@ -206,6 +206,8 @@ public class BackupService
                 }
             }
         }
+
+        out.free();
     }
 
     private void deleteRemovedParts(List<List<Object>> results)
@@ -222,7 +224,7 @@ public class BackupService
         }
 
         try {
-            RetryDriver.retry().run("delete-removed-backuo", () -> {
+            RetryDriver.retry().run("delete-removed-backup", () -> {
                 List<DeleteObjectsRequest.KeyVersion> keyList = keys.stream()
                         .map(e -> new DeleteObjectsRequest.KeyVersion(e))
                         .collect(Collectors.toList());
@@ -260,13 +262,12 @@ public class BackupService
         public ByteArrayInputStream getInputStream()
         {
             // create new ByteArrayInputStream that respect the current count
-            ByteArrayInputStream in = new ByteArrayInputStream(this.buf, 0, count);
+            return new ByteArrayInputStream(this.buf, 0, count);
+        }
 
-            // set the buffer of the ByteArrayOutputStream
-            // to null so it can't be altered anymore
+        public void free()
+        {
             this.buf = null;
-
-            return in;
         }
     }
 }
