@@ -147,6 +147,8 @@ public class BackupService
 
     public void createNewParts(Iterator<Part> results)
     {
+        ByteArrayInOutStream out = new ByteArrayInOutStream();
+
         while (results.hasNext()) {
             Part next = results.next();
 
@@ -164,8 +166,6 @@ public class BackupService
                     RetryDriver.retry()
                             .stopOnIllegalExceptions()
                             .run("backup", () -> {
-
-                                ByteArrayInOutStream out = new ByteArrayInOutStream();
                                 SnappyFramedOutputStream output = new SnappyFramedOutputStream(out);
 
                                 File[] files = path.listFiles();
@@ -197,6 +197,7 @@ public class BackupService
                                         s3Path,
                                         out.getInputStream(),
                                         objectMetadata);
+                                out.reset();
                                 return null;
                             });
                 }
