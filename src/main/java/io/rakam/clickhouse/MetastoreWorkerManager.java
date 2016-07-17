@@ -1,4 +1,4 @@
-package io.rakam.clickhouse.metastore;
+package io.rakam.clickhouse;
 
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBStreamsClient;
@@ -17,7 +17,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import io.airlift.http.client.RuntimeIOException;
 import io.airlift.log.Logger;
-import io.rakam.clickhouse.RetryDriver;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;

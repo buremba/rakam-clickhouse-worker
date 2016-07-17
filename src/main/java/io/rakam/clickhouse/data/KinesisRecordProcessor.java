@@ -20,8 +20,7 @@ import io.airlift.units.Duration;
 import io.rakam.clickhouse.BasicMemoryBuffer;
 import io.rakam.clickhouse.RetryDriver;
 import io.rakam.clickhouse.StreamConfig;
-import io.rakam.clickhouse.metastore.MetastoreWorkerManager;
-import org.apache.bval.model.MetaBean;
+import io.rakam.clickhouse.MetastoreWorkerManager;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
@@ -46,7 +45,6 @@ import static io.airlift.http.client.StringResponseHandler.createStringResponseH
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.rakam.clickhouse.analysis.ClickHouseMetastore.toClickHouseType;
 import static org.rakam.clickhouse.analysis.ClickHouseQueryExecution.getSystemSocksProxy;
 import static org.rakam.util.ValidationUtil.checkCollection;
 import static org.rakam.util.ValidationUtil.checkTableColumn;

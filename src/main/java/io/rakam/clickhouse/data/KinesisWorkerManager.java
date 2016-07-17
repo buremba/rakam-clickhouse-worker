@@ -4,13 +4,11 @@ import com.amazonaws.services.cloudwatch.AmazonCloudWatchClient;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.kinesis.AmazonKinesisClient;
 import com.amazonaws.services.kinesis.clientlibrary.interfaces.IRecordProcessorFactory;
-import com.amazonaws.services.kinesis.clientlibrary.lib.worker.InitialPositionInStream;
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.KinesisClientLibConfiguration;
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.Worker;
 import io.airlift.log.Logger;
 import io.rakam.clickhouse.BackupConfig;
 import io.rakam.clickhouse.StreamConfig;
-import io.rakam.clickhouse.metastore.MetastoreWorkerManager;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
@@ -63,6 +61,8 @@ public class KinesisWorkerManager
     @PostConstruct
     public void initializeWorker()
     {
+        logger.info("Kinesis consumer worker initializing");
+
         Thread middlewareWorker = createMiddlewareWorker();
         middlewareWorker.start();
         threads.add(middlewareWorker);

@@ -72,7 +72,6 @@ public class ClickhouseClusterShardManager
                     .setConnectTimeout(new Duration(10, SECONDS))
                     .setSocksProxy(getSystemSocksProxy()), new JettyIoPool("rakam-clickhouse", new JettyIoPoolConfig().setMaxThreads(4)),
             ImmutableSet.of());
-    private final AWSConfig awsConfig;
     private Logger logger = Logger.get(ClickhouseClusterShardManager.class);
     private final BackupConfig backupConfig;
     private final ClickHouseConfig config;
@@ -81,7 +80,6 @@ public class ClickhouseClusterShardManager
     @Inject
     public ClickhouseClusterShardManager(BackupConfig backupConfig, ClickHouseConfig config, AWSConfig awsConfig)
     {
-        this.awsConfig = awsConfig;
         this.backupConfig = backupConfig;
         this.config = config;
         amazonS3Client = new AmazonS3Client();

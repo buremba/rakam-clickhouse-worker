@@ -1,39 +1,31 @@
 package io.rakam.clickhouse;
 
-import com.getsentry.raven.Raven;
 import com.getsentry.raven.RavenFactory;
-import com.getsentry.raven.jul.SentryHandler;
 import com.google.common.base.Throwables;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Binder;
 import com.google.inject.Inject;
 import io.airlift.bootstrap.Bootstrap;
 import io.airlift.configuration.AbstractConfigurationAwareModule;
+import io.airlift.log.Logger;
 import io.rakam.clickhouse.data.ClickhouseClusterShardManager;
 import io.rakam.clickhouse.data.KinesisWorkerManager;
 import io.rakam.clickhouse.data.backup.BackupService;
 import io.rakam.clickhouse.data.backup.RecoveryManager;
-import io.rakam.clickhouse.metastore.MetastoreWorkerManager;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
 import org.rakam.server.http.HttpServerBuilder;
 import org.rakam.server.http.HttpService;
-import org.rakam.util.SentryUtil;
 
 import javax.annotation.PostConstruct;
-
-import java.util.Arrays;
-import java.util.Map;
-import java.util.Optional;
-import java.util.logging.LogManager;
-import java.util.stream.Collectors;
 
 import static io.airlift.configuration.ConfigBinder.configBinder;
 
 public class ServiceStarter
 {
+    private static final Logger logger = Logger.get(MetastoreWorkerManager.class);
+
     static {
         RavenFactory.ravenInstance();
     }
@@ -59,7 +51,9 @@ public class ServiceStarter
                 binder.bind(KinesisWorkerManager.class).asEagerSingleton();
             }
         });
+
         bootstrap.strictConfig().initialize();
+        logger.info("------ SERVICE STARTED ------");
     }
 
     private static class ShardHttpServer
