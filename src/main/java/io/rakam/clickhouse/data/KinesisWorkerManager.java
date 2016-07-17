@@ -7,8 +7,10 @@ import com.amazonaws.services.kinesis.clientlibrary.interfaces.IRecordProcessorF
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.InitialPositionInStream;
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.KinesisClientLibConfiguration;
 import com.amazonaws.services.kinesis.clientlibrary.lib.worker.Worker;
+import io.airlift.log.Logger;
 import io.rakam.clickhouse.BackupConfig;
 import io.rakam.clickhouse.StreamConfig;
+import io.rakam.clickhouse.metastore.MetastoreWorkerManager;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
@@ -28,6 +30,8 @@ import static com.amazonaws.services.kinesis.metrics.interfaces.MetricsLevel.SUM
 
 public class KinesisWorkerManager
 {
+    private static final Logger logger = Logger.get(KinesisWorkerManager.class);
+
     private final AWSConfig config;
     private final AmazonKinesisClient kinesisClient;
     private final List<Thread> threads;
@@ -62,6 +66,8 @@ public class KinesisWorkerManager
         Thread middlewareWorker = createMiddlewareWorker();
         middlewareWorker.start();
         threads.add(middlewareWorker);
+
+        logger.info("Kinesis consumer worker started");
     }
 
     private Worker getWorker(IRecordProcessorFactory factory, KinesisClientLibConfiguration libConfiguration)
