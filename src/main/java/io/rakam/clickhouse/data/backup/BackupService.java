@@ -177,14 +177,15 @@ public class BackupService
                             output.transferFrom(new FileInputStream(file));
                         }
 
-                        output.flush();
-                        ObjectMetadata objectMetadata = new ObjectMetadata();
-                        objectMetadata.setContentLength(out.size());
 
                         String s3Path = backupConfig.getIdentifier() +
                                 "/" + next.database + "/" +
                                 Base64.getEncoder().encodeToString(next.table.getBytes(UTF_8)) +
                                 "/" + next.part;
+
+                        output.flush();
+                        ObjectMetadata objectMetadata = new ObjectMetadata();
+                        objectMetadata.setContentLength(out.size());
 
                         amazonS3Client.putObject(backupConfig.getBucket(), s3Path,
                                 out.getInputStream(), objectMetadata);
@@ -250,7 +251,7 @@ public class BackupService
         public ByteArrayInputStream getInputStream()
         {
             // create new ByteArrayInputStream that respect the current count
-            ByteArrayInputStream in = new ByteArrayInputStream(this.buf);
+            ByteArrayInputStream in = new ByteArrayInputStream(this.buf, 0, count);
 
             // set the buffer of the ByteArrayOutputStream
             // to null so it can't be altered anymore
