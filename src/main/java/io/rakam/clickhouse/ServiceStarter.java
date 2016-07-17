@@ -52,6 +52,8 @@ public class ServiceStarter
             }
         });
 
+        logger.info("------ SERVICE INITIALIZING ------");
+        logger.error("------ SERVICE INITIALIZING ------");
         bootstrap.strictConfig().initialize();
         logger.error("------ SERVICE STARTED ------");
     }
