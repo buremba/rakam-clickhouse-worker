@@ -130,6 +130,8 @@ public class MetastoreWorkerManager
 
     private void processAllBlocking()
     {
+        logger.info("Syncing table metadata from dynamodb");
+        
         Map<String, AttributeValue> lastCheckpoint = null;
         List<Map<String, AttributeValue>> list = new ArrayList<>();
         do {
