@@ -147,50 +147,58 @@ public class BackupService
 
     public void createNewParts(Iterator<Part> results)
     {
-        while(results.hasNext()) {
+        while (results.hasNext()) {
             Part next = results.next();
 
-            Escaper urlEncoder = UrlEscapers.urlFormParameterEscaper();;
+            Escaper urlEncoder = UrlEscapers.urlFormParameterEscaper();
+
             File path = Paths.get(backupConfig.getDirectory().getAbsolutePath(),
                     urlEncoder.escape(next.database),
                     urlEncoder.escape(next.table),
                     next.part).toFile();
 
             if (path.exists() && path.isDirectory()) {
+                logger.info("Uploading " + next.toString());
+
                 try {
-                    RetryDriver.retry().run("backup", () -> {
-                        ByteArrayInOutStream out = new ByteArrayInOutStream();
+                    RetryDriver.retry()
+                            .stopOnIllegalExceptions()
+                            .run("backup", () -> {
 
-                        SnappyFramedOutputStream output = new SnappyFramedOutputStream(out);
+                                ByteArrayInOutStream out = new ByteArrayInOutStream();
+                                SnappyFramedOutputStream output = new SnappyFramedOutputStream(out);
 
-                        File[] files = path.listFiles();
-                        output.write(Ints.toByteArray(files.length));
-                        for (File file : files) {
-                            // write name
-                            byte[] bytes = file.getName().getBytes(UTF_8);
-                            output.write(Ints.toByteArray(bytes.length));
-                            output.write(bytes);
+                                File[] files = path.listFiles();
+                                output.write(Ints.toByteArray(files.length));
+                                for (File file : files) {
+                                    // write name
+                                    byte[] bytes = file.getName().getBytes(UTF_8);
+                                    output.write(Ints.toByteArray(bytes.length));
+                                    output.write(bytes);
 
-                            output.write(Longs.toByteArray(file.length()));
+                                    output.write(Longs.toByteArray(file.length()));
 
-                            // write file content
-                            output.transferFrom(new FileInputStream(file));
-                        }
+                                    // write file content
+                                    FileInputStream fileInputStream = new FileInputStream(file);
+                                    output.transferFrom(fileInputStream);
+                                    fileInputStream.close();
+                                }
 
+                                String s3Path = backupConfig.getIdentifier() +
+                                        "/" + next.database + "/" +
+                                        Base64.getEncoder().encodeToString(next.table.getBytes(UTF_8)) +
+                                        "/" + next.part;
 
-                        String s3Path = backupConfig.getIdentifier() +
-                                "/" + next.database + "/" +
-                                Base64.getEncoder().encodeToString(next.table.getBytes(UTF_8)) +
-                                "/" + next.part;
+                                output.flush();
+                                ObjectMetadata objectMetadata = new ObjectMetadata();
+                                objectMetadata.setContentLength(out.size());
 
-                        output.flush();
-                        ObjectMetadata objectMetadata = new ObjectMetadata();
-                        objectMetadata.setContentLength(out.size());
-
-                        amazonS3Client.putObject(backupConfig.getBucket(), s3Path,
-                                out.getInputStream(), objectMetadata);
-                        return null;
-                    });
+                                amazonS3Client.putObject(backupConfig.getBucket(),
+                                        s3Path,
+                                        out.getInputStream(),
+                                        objectMetadata);
+                                return null;
+                            });
                 }
                 catch (Exception e) {
                     logger.error(e);

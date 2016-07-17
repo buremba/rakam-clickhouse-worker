@@ -356,5 +356,16 @@ public class ClickhouseClusterShardManager
             this.table = table;
             this.part = part;
         }
+
+        @Override
+        public String toString()
+        {
+            return "Part{" +
+                    "nodeIdentifier='" + nodeIdentifier + '\'' +
+                    ", database='" + database + '\'' +
+                    ", table='" + table + '\'' +
+                    ", part='" + part + '\'' +
+                    '}';
+        }
     }
 }
