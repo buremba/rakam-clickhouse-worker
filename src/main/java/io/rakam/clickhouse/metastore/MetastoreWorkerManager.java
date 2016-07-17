@@ -58,7 +58,7 @@ public class MetastoreWorkerManager
     private final DynamodbMetastoreConfig metastoreConfig;
     private final ClickHouseConfig config;
     private final Set<String> activeShards;
-    private String tableArn;
+    private String streamArn;
     private AmazonDynamoDBStreamsClient streamsClient;
     private ScheduledExecutorService executor;
 
@@ -68,20 +68,20 @@ public class MetastoreWorkerManager
         this.config = config;
         amazonDynamoDBClient = new AmazonDynamoDBClient(awsConfig.getCredentials());
 
+        amazonDynamoDBClient.setRegion(awsConfig.getAWSRegion());
+
         if (awsConfig.getDynamodbEndpoint() != null) {
             amazonDynamoDBClient.setEndpoint(awsConfig.getDynamodbEndpoint());
         }
 
-        amazonDynamoDBClient.setRegion(awsConfig.getAWSRegion());
-
         this.metastoreConfig = metastoreConfig;
 
-        streamsClient =
-                new AmazonDynamoDBStreamsClient(awsConfig.getCredentials());
+        streamsClient = new AmazonDynamoDBStreamsClient(awsConfig.getCredentials());
+        streamsClient.setRegion(awsConfig.getAWSRegion());
+
         if (awsConfig.getDynamodbEndpoint() != null) {
             streamsClient.setEndpoint(awsConfig.getDynamodbEndpoint());
         }
-        streamsClient.setRegion(awsConfig.getAWSRegion());
 
         activeShards = new ConcurrentSkipListSet<>();
         executor = Executors.newSingleThreadScheduledExecutor();
@@ -91,22 +91,25 @@ public class MetastoreWorkerManager
     public void run()
             throws IOException
     {
-        tableArn = amazonDynamoDBClient.describeTable(metastoreConfig.getTableName())
+        logger.info("Syncing table metadata from dynamodb");
+
+        streamArn = amazonDynamoDBClient.describeTable(metastoreConfig.getTableName())
                 .getTable().getLatestStreamArn();
 
         discoverShards();
         executor.scheduleAtFixedRate(this::discoverShards, 30, 30, SECONDS);
 
         processAllBlocking();
+        logger.info("Started listening metadata changes from dynamodb");
+
     }
 
     private void discoverShards()
     {
         DescribeStreamResult describeStreamResult =
                 streamsClient.describeStream(new DescribeStreamRequest()
-                        .withStreamArn(tableArn));
-        List<Shard> shards =
-                describeStreamResult.getStreamDescription().getShards();
+                        .withStreamArn(streamArn));
+        List<Shard> shards = describeStreamResult.getStreamDescription().getShards();
 
         for (Shard shard : shards) {
             if (activeShards.contains(shard)) {
@@ -114,15 +117,13 @@ public class MetastoreWorkerManager
             }
             String shardId = shard.getShardId();
 
-            GetShardIteratorResult getShardIteratorResult = streamsClient.getShardIterator(new GetShardIteratorRequest()
-                    .withStreamArn(tableArn)
+            GetShardIteratorResult getShardIteratorResult = streamsClient
+                    .getShardIterator(new GetShardIteratorRequest()
+                    .withStreamArn(streamArn)
                     .withShardId(shardId)
                     .withShardIteratorType(LATEST));
 
-            processAllBlocking();
-
             String iterator = getShardIteratorResult.getShardIterator();
-
             executor.schedule(() -> nextResults(shard.getShardId(), iterator),
                     500, MILLISECONDS);
         }
@@ -130,8 +131,6 @@ public class MetastoreWorkerManager
 
     private void processAllBlocking()
     {
-        logger.info("Syncing table metadata from dynamodb");
-        
         Map<String, AttributeValue> lastCheckpoint = null;
         List<Map<String, AttributeValue>> list = new ArrayList<>();
         do {

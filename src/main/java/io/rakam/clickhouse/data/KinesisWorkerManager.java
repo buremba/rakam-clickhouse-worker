@@ -43,12 +43,14 @@ public class KinesisWorkerManager
         this.threads = new ArrayList<>();
         this.streamConfig = streamConfig;
         this.kinesisClient = new AmazonKinesisClient(config.getCredentials());
+
+        if (config.getKinesisEndpoint() != null) {
+            kinesisClient.setEndpoint(config.getKinesisEndpoint());
+        }
+
         // SEE: https://github.com/awslabs/amazon-kinesis-client/issues/34
         if (config.getDynamodbEndpoint() == null && config.getKinesisEndpoint() == null) {
             kinesisClient.setRegion(config.getAWSRegion());
-        }
-        if (config.getKinesisEndpoint() != null) {
-            kinesisClient.setEndpoint(config.getKinesisEndpoint());
         }
         KinesisUtil.createAndWaitForStreamToBecomeAvailable(kinesisClient, config.getEventStoreStreamName(), 1);
         this.recordProcessorFactory = () -> new KinesisRecordProcessor(streamConfig, config, clickHouseConfig, metastoreConfig);
@@ -69,6 +71,9 @@ public class KinesisWorkerManager
         AmazonDynamoDBClient dynamoDBClient = new AmazonDynamoDBClient(libConfiguration.getDynamoDBCredentialsProvider(),
                 libConfiguration.getDynamoDBClientConfiguration());
 
+        dynamoDBClient.setRegion(config.getAWSRegion());
+        amazonKinesisClient.setRegion(config.getAWSRegion());
+
         if (config.getDynamodbEndpoint() != null) {
             dynamoDBClient.setEndpoint(config.getDynamodbEndpoint());
         }
@@ -76,9 +81,6 @@ public class KinesisWorkerManager
         if(config.getKinesisEndpoint() != null) {
             kinesisClient.setEndpoint(config.getKinesisEndpoint());
         }
-
-        dynamoDBClient.setRegion(config.getAWSRegion());
-        amazonKinesisClient.setRegion(config.getAWSRegion());
 
         libConfiguration.withMetricsLevel(backupConfig.getEnableCloudWatch() ? SUMMARY : NONE);
 
