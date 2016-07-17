@@ -81,6 +81,7 @@ public class MetastoreWorkerManager
         if (awsConfig.getDynamodbEndpoint() != null) {
             streamsClient.setEndpoint(awsConfig.getDynamodbEndpoint());
         }
+        streamsClient.setRegion(awsConfig.getAWSRegion());
 
         activeShards = new ConcurrentSkipListSet<>();
         executor = Executors.newSingleThreadScheduledExecutor();
