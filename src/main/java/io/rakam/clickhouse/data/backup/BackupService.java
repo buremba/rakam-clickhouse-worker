@@ -63,6 +63,8 @@ public class BackupService
         this.config = config;
 
         amazonS3Client = new AmazonS3Client();
+        amazonS3Client.setRegion(awsConfig.getAWSRegion());
+
         if (awsConfig.getS3Endpoint() != null) {
             amazonS3Client.setEndpoint(awsConfig.getS3Endpoint());
         }
@@ -162,6 +164,11 @@ public class BackupService
             if (path.exists() && path.isDirectory()) {
                 logger.info("Uploading " + next.toString());
 
+                String s3Path = backupConfig.getIdentifier() +
+                        "/" + next.database + "/" +
+                        Base64.getEncoder().encodeToString(next.table.getBytes(UTF_8)) +
+                        "/" + next.part;
+
                 try {
                     RetryDriver.retry()
                             .stopOnIllegalExceptions()
@@ -183,11 +190,6 @@ public class BackupService
                                     output.transferFrom(fileInputStream);
                                     fileInputStream.close();
                                 }
-
-                                String s3Path = backupConfig.getIdentifier() +
-                                        "/" + next.database + "/" +
-                                        Base64.getEncoder().encodeToString(next.table.getBytes(UTF_8)) +
-                                        "/" + next.part;
 
                                 output.flush();
                                 ObjectMetadata objectMetadata = new ObjectMetadata();
