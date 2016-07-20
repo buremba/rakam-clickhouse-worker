@@ -83,6 +83,8 @@ public class ClickhouseClusterShardManager
         this.backupConfig = backupConfig;
         this.config = config;
         amazonS3Client = new AmazonS3Client();
+        amazonS3Client.setRegion(awsConfig.getAWSRegion());
+
         if (awsConfig.getS3Endpoint() != null) {
             amazonS3Client.setEndpoint(awsConfig.getS3Endpoint());
         }

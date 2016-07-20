@@ -1,15 +1,11 @@
 package io.rakam.clickhouse.data.backup;
 
 import com.amazonaws.AmazonClientException;
-import com.amazonaws.SDKGlobalConfiguration;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.model.DeleteObjectsRequest;
 import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.amazonaws.services.s3.model.PutObjectResult;
 import com.google.common.collect.Iterators;
 import com.google.common.escape.Escaper;
-import com.google.common.hash.Hasher;
-import com.google.common.hash.Hashing;
 import com.google.common.net.UrlEscapers;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
@@ -25,16 +21,12 @@ import org.rakam.clickhouse.analysis.ClickHouseQueryExecution;
 import org.xerial.snappy.SnappyFramedOutputStream;
 
 import javax.annotation.PostConstruct;
-import javax.xml.bind.DatatypeConverter;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;

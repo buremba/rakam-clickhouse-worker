@@ -11,6 +11,7 @@ import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastore;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.collection.FieldDependencyBuilder;
+import org.rakam.collection.FieldType;
 import org.rakam.collection.SchemaField;
 import org.rakam.util.ProjectCollection;
 
@@ -72,7 +73,8 @@ public class MessageTransformer
 
             if (fieldCount < fields.size()) {
                 for (int i = fieldCount; i < fields.size(); i++) {
-                    writeValue(null, fields.get(i).getType(), output);
+                    FieldType type = fields.get(i).getType();
+                    writeValue(null, type, output);
                 }
             }
         }

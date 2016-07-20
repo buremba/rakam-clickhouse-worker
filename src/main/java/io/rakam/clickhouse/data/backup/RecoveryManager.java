@@ -49,6 +49,8 @@ public class RecoveryManager
         this.backupConfig = backupConfig;
         this.backupService = backupService;
         amazonS3Client = new AmazonS3Client();
+        amazonS3Client.setRegion(awsConfig.getAWSRegion());
+
         if (awsConfig.getS3Endpoint() != null) {
             amazonS3Client.setEndpoint(awsConfig.getS3Endpoint());
         }
