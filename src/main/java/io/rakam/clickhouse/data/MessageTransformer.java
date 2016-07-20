@@ -38,7 +38,9 @@ public class MessageTransformer
         DynamodbMetastore clickHouseMetastore = new DynamodbMetastore(awsConfig, metastoreConfig,
                 new FieldDependencyBuilder().build(), new EventBus());
 
-        schemaCache = CacheBuilder.newBuilder().expireAfterWrite(0, TimeUnit.MICROSECONDS).build(new CacheLoader<ProjectCollection, List<SchemaField>>()
+        schemaCache = CacheBuilder.newBuilder()
+                .expireAfterWrite(1, TimeUnit.MINUTES)
+                .build(new CacheLoader<ProjectCollection, List<SchemaField>>()
         {
             @Override
             public List<SchemaField> load(ProjectCollection key)
@@ -68,9 +70,9 @@ public class MessageTransformer
                 table.put(collection, output);
             }
 
-            List<SchemaField> fields = schemaCache.getUnchecked(collection);
             output.write(data, data.length - in.available(), in.available());
 
+            List<SchemaField> fields = schemaCache.getUnchecked(collection);
             if (fieldCount < fields.size()) {
                 for (int i = fieldCount; i < fields.size(); i++) {
                     FieldType type = fields.get(i).getType();

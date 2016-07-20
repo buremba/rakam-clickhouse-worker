@@ -28,13 +28,20 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
 import static io.rakam.clickhouse.data.ClickhouseClusterShardManager.extractPart;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.nio.file.FileVisitResult.CONTINUE;
+import static java.nio.file.FileVisitResult.TERMINATE;
 
 public class RecoveryManager
 {
@@ -144,7 +151,12 @@ public class RecoveryManager
                     inputStream.read(nameBytes);
 
                     File file = new File(partDirectory, new String(nameBytes, UTF_8));
-                    file.createNewFile();
+                    try {
+                        file.createNewFile();
+                    }
+                    catch (IOException e) {
+                        logger.error(e, "Error while creating part file");
+                    }
 
                     byte[] lengthArr = new byte[8];
                     inputStream.read(lengthArr);
@@ -162,7 +174,7 @@ public class RecoveryManager
             }
             catch (IOException e) {
                 logger.error(e);
-                partDirectory.delete();
+                deleteAllFiles(partDirectory.toPath());
             }
             finally {
                 try {
@@ -172,6 +184,49 @@ public class RecoveryManager
                     logger.error(e);
                 }
             }
+        }
+    }
+
+    private void deleteAllFiles(Path partDirectory) {
+        try {
+            Files.walkFileTree(partDirectory, new SimpleFileVisitor<Path>()
+            {
+                @Override
+                public FileVisitResult visitFile(final Path file, final BasicFileAttributes attrs)
+                        throws IOException
+                {
+                    Files.delete(file);
+                    return CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(final Path file, final IOException e)
+                {
+                    return handleException(e);
+                }
+
+                private FileVisitResult handleException(final IOException e)
+                {
+                    e.printStackTrace(); // replace with more robust error handling
+                    return TERMINATE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(final Path dir, final IOException e)
+                        throws IOException
+                {
+                    if (e != null) {
+                        return handleException(e);
+                    }
+                    Files.delete(dir);
+                    return CONTINUE;
+                }
+            });
+
+            partDirectory.toFile().delete();
+        }
+        catch (IOException e1) {
+            logger.error(e1);
         }
     }
 }
