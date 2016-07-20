@@ -114,6 +114,9 @@ public class MetastoreWorkerManager
             if (activeShards.contains(shard)) {
                 continue;
             }
+
+            logger.info("Discovered new shard %s", shard);
+
             String shardId = shard.getShardId();
 
             GetShardIteratorResult getShardIteratorResult = streamsClient
@@ -202,6 +205,7 @@ public class MetastoreWorkerManager
         }
         else {
             activeShards.remove(shardId);
+            discoverShards();
         }
     }
 
@@ -229,8 +233,6 @@ public class MetastoreWorkerManager
             return getRecordsResult.getNextShardIterator();
         }
         catch (Exception e) {
-            logger.error(e);
-
             if (getRecordsResult != null) {
                 return getRecordsResult.getNextShardIterator();
             }
