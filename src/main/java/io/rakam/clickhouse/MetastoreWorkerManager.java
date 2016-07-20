@@ -232,7 +232,8 @@ public class MetastoreWorkerManager
             return getRecordsResult.getNextShardIterator();
         }
         catch (Exception e) {
-            logger.warn(e);
+            logger.warn(e, "Error while processing stream");
+
             if (getRecordsResult != null) {
                 return getRecordsResult.getNextShardIterator();
             }
