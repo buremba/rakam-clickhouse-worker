@@ -1,5 +1,6 @@
 package io.rakam.clickhouse.data.backup;
 
+import com.amazonaws.SDKGlobalConfiguration;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.model.DeleteObjectsRequest;
 import com.amazonaws.services.s3.model.ObjectMetadata;
@@ -61,6 +62,7 @@ public class BackupService
     {
         this.backupConfig = backupConfig;
         this.config = config;
+        System.setProperty(SDKGlobalConfiguration.ENFORCE_S3_SIGV4_SYSTEM_PROPERTY, "true");
 
         amazonS3Client = new AmazonS3Client();
         amazonS3Client.setRegion(awsConfig.getAWSRegion());
