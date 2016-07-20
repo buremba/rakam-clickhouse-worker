@@ -220,8 +220,7 @@ public class MetastoreWorkerManager
             if (!records.isEmpty()) {
                 try {
                     RetryDriver.retry().run("metadata", () -> {
-                        process(records.stream()
-                                .map(e -> e.getDynamodb().getNewImage()));
+                        process(records.stream().map(e -> e.getDynamodb().getNewImage()));
                         return null;
                     });
                 }
@@ -233,6 +232,7 @@ public class MetastoreWorkerManager
             return getRecordsResult.getNextShardIterator();
         }
         catch (Exception e) {
+            logger.warn(e);
             if (getRecordsResult != null) {
                 return getRecordsResult.getNextShardIterator();
             }

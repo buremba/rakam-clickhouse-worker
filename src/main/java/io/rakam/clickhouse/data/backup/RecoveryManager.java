@@ -13,6 +13,7 @@ import com.google.common.primitives.Longs;
 import com.google.inject.Inject;
 import io.airlift.log.Logger;
 import io.rakam.clickhouse.BackupConfig;
+import io.rakam.clickhouse.RetryDriver;
 import io.rakam.clickhouse.data.ClickhouseClusterShardManager;
 import io.rakam.clickhouse.data.ClickhouseClusterShardManager.Part;
 import org.rakam.aws.AWSConfig;
@@ -95,9 +96,20 @@ public class RecoveryManager
                 missingParts.add(part);
             }
         }
-        backupService.createNewParts(missingParts.iterator());
 
-        parts.forEach(this::recoverPartIfNotExists);
+        Thread thread = new Thread(() -> {
+            try {
+                RetryDriver.retry().run("backup", () -> {
+                    backupService.createNewParts(missingParts.iterator());
+                    parts.forEach(this::recoverPartIfNotExists);
+                    return null;
+                });
+            }
+            catch (Exception e) {
+                logger.error(e);
+            }
+        });
+        thread.run();
     }
 
     private void recoverPartIfNotExists(Part summary)

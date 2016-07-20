@@ -1,11 +1,15 @@
 package io.rakam.clickhouse.data.backup;
 
+import com.amazonaws.AmazonClientException;
 import com.amazonaws.SDKGlobalConfiguration;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.model.DeleteObjectsRequest;
 import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PutObjectResult;
 import com.google.common.collect.Iterators;
 import com.google.common.escape.Escaper;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
 import com.google.common.net.UrlEscapers;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
@@ -21,12 +25,16 @@ import org.rakam.clickhouse.analysis.ClickHouseQueryExecution;
 import org.xerial.snappy.SnappyFramedOutputStream;
 
 import javax.annotation.PostConstruct;
+import javax.xml.bind.DatatypeConverter;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -62,7 +70,6 @@ public class BackupService
     {
         this.backupConfig = backupConfig;
         this.config = config;
-        System.setProperty(SDKGlobalConfiguration.ENFORCE_S3_SIGV4_SYSTEM_PROPERTY, "true");
 
         amazonS3Client = new AmazonS3Client();
         amazonS3Client.setRegion(awsConfig.getAWSRegion());
@@ -151,8 +158,6 @@ public class BackupService
 
     public void createNewParts(Iterator<Part> results)
     {
-        ByteArrayInOutStream out = new ByteArrayInOutStream();
-
         while (results.hasNext()) {
             Part next = results.next();
 
@@ -175,6 +180,8 @@ public class BackupService
                     RetryDriver.retry()
                             .stopOnIllegalExceptions()
                             .run("backup", () -> {
+                                ByteArrayInOutStream out = new ByteArrayInOutStream();
+
                                 SnappyFramedOutputStream output = new SnappyFramedOutputStream(out);
 
                                 File[] files = path.listFiles();
@@ -197,11 +204,29 @@ public class BackupService
                                 ObjectMetadata objectMetadata = new ObjectMetadata();
                                 objectMetadata.setContentLength(out.size());
 
-                                amazonS3Client.putObject(backupConfig.getBucket(),
-                                        s3Path,
-                                        out.getInputStream(),
-                                        objectMetadata);
+                                SharedByteArrayInputStream inputStream = out.getInputStream();
+
+                                for (int i = 0; i < 5; i++) {
+                                    try {
+                                        amazonS3Client.putObject(backupConfig.getBucket(),
+                                                s3Path,
+                                                inputStream,
+                                                objectMetadata);
+                                    }
+                                    catch (AmazonClientException e) {
+                                        if (e.isRetryable() && i < 5) {
+                                            continue;
+                                        }
+                                        else {
+                                            throw e;
+                                        }
+                                    }
+
+                                    break;
+                                }
+
                                 out.reset();
+                                out = null;
                                 return null;
                             });
                 }
@@ -210,8 +235,6 @@ public class BackupService
                 }
             }
         }
-
-        out.free();
     }
 
     private void deleteRemovedParts(List<List<Object>> results)
@@ -263,15 +286,35 @@ public class BackupService
             super(size);
         }
 
-        public ByteArrayInputStream getInputStream()
+        public SharedByteArrayInputStream getInputStream()
         {
             // create new ByteArrayInputStream that respect the current count
-            return new ByteArrayInputStream(this.buf, 0, count);
+            return new SharedByteArrayInputStream(this.buf, 0, count);
         }
 
         public void free()
         {
             this.buf = null;
+        }
+    }
+
+    public static class SharedByteArrayInputStream
+            extends ByteArrayInputStream
+    {
+
+        public SharedByteArrayInputStream(byte[] buf, int i, int count)
+        {
+            super(buf, i, count);
+        }
+
+        public byte[] getRawByteArray()
+        {
+            return buf;
+        }
+
+        public int position()
+        {
+            return pos;
         }
     }
 }
