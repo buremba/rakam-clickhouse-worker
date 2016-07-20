@@ -85,7 +85,8 @@ public class KinesisRecordProcessor
 
         if (streamBuffer.shouldFlush()) {
             synchronized (this) {
-                logger.info("Flushing %s records", streamBuffer.getRecords().size());
+                int size = streamBuffer.getRecords().size();
+                logger.info("Flushing %s records", size);
 
                 Map<ProjectCollection, Map.Entry<List<SchemaField>, MessageTransformer.ZeroCopyByteArrayOutputStream>> pages;
                 try {
@@ -111,6 +112,8 @@ public class KinesisRecordProcessor
                         logger.error(e);
                     }
                 }
+
+                logger.info("Flushing %s records", streamBuffer.getRecords().size());
 
                 try {
                     checkpointer.checkpoint();
