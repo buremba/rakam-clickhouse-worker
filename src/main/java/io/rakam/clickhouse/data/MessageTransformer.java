@@ -41,14 +41,14 @@ public class MessageTransformer
         schemaCache = CacheBuilder.newBuilder()
                 .expireAfterWrite(1, TimeUnit.MINUTES)
                 .build(new CacheLoader<ProjectCollection, List<SchemaField>>()
-        {
-            @Override
-            public List<SchemaField> load(ProjectCollection key)
-                    throws Exception
-            {
-                return clickHouseMetastore.getCollection(key.project, key.collection);
-            }
-        });
+                {
+                    @Override
+                    public List<SchemaField> load(ProjectCollection key)
+                            throws Exception
+                    {
+                        return clickHouseMetastore.getCollection(key.project, key.collection);
+                    }
+                });
     }
 
     public Map<ProjectCollection, Map.Entry<List<SchemaField>, ZeroCopyByteArrayOutputStream>> convert(List<Record> records)
@@ -78,6 +78,9 @@ public class MessageTransformer
                     FieldType type = fields.get(i).getType();
                     writeValue(null, type, output);
                 }
+            }
+            else if (fieldCount > fields.size()) {
+                schemaCache.refresh(collection);
             }
         }
 
