@@ -32,6 +32,7 @@ import org.rakam.server.http.annotations.BodyParam;
 import org.rakam.server.http.annotations.JsonRequest;
 import org.rakam.util.ProjectCollection;
 
+import javax.ws.rs.GET;
 import javax.ws.rs.Path;
 import javax.ws.rs.core.UriBuilder;
 
@@ -88,6 +89,13 @@ public class ClickhouseClusterShardManager
         if (awsConfig.getS3Endpoint() != null) {
             amazonS3Client.setEndpoint(awsConfig.getS3Endpoint());
         }
+    }
+
+    @Path("/")
+    @GET
+    public String main()
+    {
+        return "OK";
     }
 
     @Path("/move_parts")

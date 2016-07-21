@@ -7,6 +7,7 @@ import com.google.inject.Binder;
 import com.google.inject.Inject;
 import io.airlift.bootstrap.Bootstrap;
 import io.airlift.configuration.AbstractConfigurationAwareModule;
+import io.airlift.configuration.Config;
 import io.airlift.log.Logger;
 import io.rakam.clickhouse.data.ClickhouseClusterShardManager;
 import io.rakam.clickhouse.data.KinesisWorkerManager;
@@ -42,6 +43,7 @@ public class ServiceStarter
                 configBinder(binder).bindConfig(AWSConfig.class);
                 configBinder(binder).bindConfig(ClickHouseConfig.class);
                 configBinder(binder).bindConfig(StreamConfig.class);
+                configBinder(binder).bindConfig(ShardHttpServer.HttpConfig.class);
                 configBinder(binder).bindConfig(DynamodbMetastoreConfig.class);
                 binder.bind(HttpService.class).to(ClickhouseClusterShardManager.class);
                 binder.bind(ShardHttpServer.class).asEagerSingleton();
@@ -52,20 +54,20 @@ public class ServiceStarter
             }
         });
 
-        logger.info("------ SERVICE INITIALIZING ------");
         bootstrap.strictConfig().initialize();
         logger.info("------ SERVICE STARTED ------");
     }
 
     private static class ShardHttpServer
     {
-
         private final HttpService service;
+        private final HttpConfig config;
 
         @Inject
-        public ShardHttpServer(HttpService service)
+        public ShardHttpServer(HttpService service, HttpConfig config)
         {
             this.service = service;
+            this.config = config;
         }
 
         @PostConstruct
@@ -74,10 +76,26 @@ public class ServiceStarter
             try {
                 new HttpServerBuilder().setHttpServices(
                         ImmutableSet.of(service)).build()
-                        .bind("0.0.0.0", 5466);
+                        .bind("0.0.0.0", config.getPort());
             }
             catch (InterruptedException e) {
                 throw Throwables.propagate(e);
+            }
+        }
+
+        public static class HttpConfig {
+            private int port = 5466;
+
+            @Config("http-port")
+            public HttpConfig setPort(int port)
+            {
+                this.port = port;
+                return this;
+            }
+
+            public int getPort()
+            {
+                return port;
             }
         }
     }

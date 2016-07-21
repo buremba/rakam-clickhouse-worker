@@ -113,7 +113,7 @@ public class KinesisRecordProcessor
                     }
                 }
 
-                logger.info("Flushed %s records", streamBuffer.getRecords().size());
+                logger.info("Flushed %s records", size);
 
                 try {
                     checkpointer.checkpoint();
