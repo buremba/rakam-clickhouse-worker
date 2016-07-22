@@ -145,14 +145,20 @@ public class RecoveryManager
                     int nameLength = Ints.fromByteArray(bytes);
 
                     if(nameLength <= 0) {
-                        logger.error("Invalid backup file, file name bytes is not valid: %s", summary.toString());
+                        logger.error("Invalid format for part %s. Key: %s", summary.toString(), key);
+                        amazonS3Client.deleteObject(backupConfig.getBucket(), key);
                         return;
                     }
 
                     byte[] nameBytes = new byte[nameLength];
                     inputStream.read(nameBytes);
+                    String fileName = new String(nameBytes, UTF_8);
+                    if(!fileName.endsWith(".mrk") && !fileName.endsWith(".bin") && !fileName.equals("checksums.txt") && !fileName.equals("columns.txt")) {
+                        logger.error("Invalid filename format for part %s. Key %s", summary.toString(), key);
+                        amazonS3Client.deleteObject(backupConfig.getBucket(), key);
+                    }
 
-                    file = new File(partDirectory, new String(nameBytes, UTF_8));
+                    file = new File(partDirectory, fileName);
                     file.createNewFile();
 
                     byte[] lengthArr = new byte[8];
