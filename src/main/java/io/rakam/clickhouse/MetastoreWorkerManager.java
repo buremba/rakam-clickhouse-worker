@@ -201,7 +201,7 @@ public class MetastoreWorkerManager
     {
         String nextIterator = processRecords(iterator);
         if (nextIterator != null) {
-            executor.schedule(() -> nextResults(shardId, nextIterator), 500, MILLISECONDS);
+            executor.schedule(() -> nextResults(shardId, nextIterator), 3, SECONDS);
         }
         else {
             activeShards.remove(shardId);
