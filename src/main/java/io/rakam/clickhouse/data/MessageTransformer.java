@@ -1,9 +1,6 @@
 package io.rakam.clickhouse.data;
 
 import com.amazonaws.services.kinesis.model.Record;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.CacheLoader;
-import com.google.common.cache.LoadingCache;
 import com.google.common.eventbus.EventBus;
 import com.google.common.io.LittleEndianDataInputStream;
 import com.google.common.io.LittleEndianDataOutputStream;
@@ -23,7 +20,6 @@ import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.rakam.clickhouse.analysis.ClickHouseQueryExecution.readVarInt;
@@ -31,30 +27,22 @@ import static org.rakam.clickhouse.collection.ClickHouseEventStore.writeValue;
 
 public class MessageTransformer
 {
-    private final LoadingCache<ProjectCollection, List<SchemaField>> schemaCache;
+    private final DynamodbMetastore clickHouseMetastore;
 
     public MessageTransformer(AWSConfig awsConfig, DynamodbMetastoreConfig metastoreConfig)
     {
         DynamodbMetastore clickHouseMetastore = new DynamodbMetastore(awsConfig, metastoreConfig,
                 new FieldDependencyBuilder().build(), new EventBus());
 
-        schemaCache = CacheBuilder.newBuilder()
-                .expireAfterWrite(1, TimeUnit.MINUTES)
-                .build(new CacheLoader<ProjectCollection, List<SchemaField>>()
-                {
-                    @Override
-                    public List<SchemaField> load(ProjectCollection key)
-                            throws Exception
-                    {
-                        return clickHouseMetastore.getCollection(key.project, key.collection);
-                    }
-                });
+        this.clickHouseMetastore = clickHouseMetastore;
     }
 
     public Map<ProjectCollection, Map.Entry<List<SchemaField>, ZeroCopyByteArrayOutputStream>> convert(List<Record> records)
             throws IOException
     {
         Map<ProjectCollection, ByteArrayBackedLittleEndianDataOutputStream> table = new HashMap<>();
+
+        Map<ProjectCollection, List<SchemaField>> map = new HashMap<>();
 
         for (Record record : records) {
             ProjectCollection collection = extractCollection(record);
@@ -72,22 +60,24 @@ public class MessageTransformer
 
             output.write(data, data.length - in.available(), in.available());
 
-            List<SchemaField> fields = schemaCache.getUnchecked(collection);
+            List<SchemaField> fields = map.get(collection);
+            if (fields == null) {
+                fields = clickHouseMetastore.getCollection(collection.project, collection.collection);
+                map.put(collection, fields);
+            }
+
             if (fieldCount < fields.size()) {
                 for (int i = fieldCount; i < fields.size(); i++) {
                     FieldType type = fields.get(i).getType();
                     writeValue(null, type, output);
                 }
             }
-            else if (fieldCount > fields.size()) {
-                schemaCache.refresh(collection);
-            }
         }
 
         return table.entrySet().stream().collect(Collectors.toMap(
                 e -> e.getKey(),
                 e -> new SimpleImmutableEntry<>(
-                        schemaCache.getUnchecked(e.getKey()),
+                        map.get(e.getKey()),
                         e.getValue().getUnderlyingOutputStream())));
     }
 
