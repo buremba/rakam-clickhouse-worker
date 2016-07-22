@@ -96,7 +96,7 @@ public class MetastoreWorkerManager
                 .getTable().getLatestStreamArn();
 
         discoverShards();
-        executor.scheduleAtFixedRate(this::discoverShards, 180, 180, SECONDS);
+        executor.scheduleAtFixedRate(this::discoverShards, 30, 30, SECONDS);
 
         processAllBlocking();
         logger.info("Started listening metadata changes from dynamodb");
@@ -206,7 +206,7 @@ public class MetastoreWorkerManager
         else {
             activeShards.remove(shardId);
             logger.info("Removing shard %s", shardId);
-//            discoverShards();
+            discoverShards();
         }
     }
 

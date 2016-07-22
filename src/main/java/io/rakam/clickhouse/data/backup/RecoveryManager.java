@@ -145,7 +145,8 @@ public class RecoveryManager
                     int nameLength = Ints.fromByteArray(bytes);
 
                     if(nameLength <= 0) {
-                        throw new RuntimeException("Invalid backup file, file name bytes is not valid.");
+                        logger.error("Invalid backup file, file name bytes is not valid.: %s", summary);
+                        return;
                     }
 
                     byte[] nameBytes = new byte[nameLength];
