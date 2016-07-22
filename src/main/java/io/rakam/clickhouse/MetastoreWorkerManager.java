@@ -205,6 +205,7 @@ public class MetastoreWorkerManager
         }
         else {
             activeShards.remove(shardId);
+            logger.info("Removing shard %s", shardId);
             discoverShards();
         }
     }
@@ -232,7 +233,7 @@ public class MetastoreWorkerManager
             return getRecordsResult.getNextShardIterator();
         }
         catch (Exception e) {
-            logger.warn(e, "Error while processing stream");
+            logger.error(e, "Error while processing stream");
 
             if (getRecordsResult != null) {
                 return getRecordsResult.getNextShardIterator();
