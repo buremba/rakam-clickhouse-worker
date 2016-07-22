@@ -42,6 +42,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.amazonaws.services.dynamodbv2.model.ShardIteratorType.LATEST;
+import static com.amazonaws.services.dynamodbv2.model.ShardIteratorType.TRIM_HORIZON;
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -96,7 +97,7 @@ public class MetastoreWorkerManager
                 .getTable().getLatestStreamArn();
 
         discoverShards();
-        executor.scheduleAtFixedRate(this::discoverShards, 30, 30, SECONDS);
+        executor.scheduleAtFixedRate(this::discoverShards, 60, 60, SECONDS);
 
         processAllBlocking();
         logger.info("Started listening metadata changes from dynamodb");
@@ -123,7 +124,7 @@ public class MetastoreWorkerManager
                     .getShardIterator(new GetShardIteratorRequest()
                     .withStreamArn(streamArn)
                     .withShardId(shardId)
-                    .withShardIteratorType(LATEST));
+                    .withShardIteratorType(TRIM_HORIZON));
 
             String iterator = getShardIteratorResult.getShardIterator();
             executor.schedule(() -> nextResults(shard.getShardId(), iterator),
@@ -206,7 +207,7 @@ public class MetastoreWorkerManager
         else {
             activeShards.remove(shardId);
             logger.info("Removing shard %s", shardId);
-            discoverShards();
+//            discoverShards();
         }
     }
 
