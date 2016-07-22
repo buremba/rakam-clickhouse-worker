@@ -1,11 +1,9 @@
 package io.rakam.clickhouse.data.backup;
 
-import com.amazonaws.AmazonClientException;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.model.AmazonS3Exception;
 import com.amazonaws.services.s3.model.ObjectListing;
 import com.amazonaws.services.s3.model.S3Object;
-import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.google.common.escape.Escaper;
 import com.google.common.net.UrlEscapers;
 import com.google.common.primitives.Ints;
@@ -14,7 +12,6 @@ import com.google.inject.Inject;
 import io.airlift.log.Logger;
 import io.rakam.clickhouse.BackupConfig;
 import io.rakam.clickhouse.RetryDriver;
-import io.rakam.clickhouse.data.ClickhouseClusterShardManager;
 import io.rakam.clickhouse.data.ClickhouseClusterShardManager.Part;
 import org.rakam.aws.AWSConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
@@ -27,7 +24,6 @@ import javax.annotation.PostConstruct;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,7 +41,7 @@ import static java.nio.file.FileVisitResult.TERMINATE;
 
 public class RecoveryManager
 {
-    private static Logger logger = Logger.get(BackupService.class);
+    private static Logger logger = Logger.get(RecoveryManager.class);
     private final BackupService backupService;
     private final AmazonS3Client amazonS3Client;
     private final BackupConfig backupConfig;
@@ -135,6 +131,7 @@ public class RecoveryManager
 
             S3Object object = amazonS3Client.getObject(backupConfig.getBucket(), key);
 
+            File file = null;
             try {
                 partDirectory.mkdir();
                 SnappyFramedInputStream inputStream = new SnappyFramedInputStream(object.getObjectContent());
@@ -147,16 +144,15 @@ public class RecoveryManager
                     inputStream.read(bytes);
                     int nameLength = Ints.fromByteArray(bytes);
 
+                    if(nameLength <= 0) {
+                        throw new RuntimeException("Invalid backup file, file name bytes is not valid.");
+                    }
+
                     byte[] nameBytes = new byte[nameLength];
                     inputStream.read(nameBytes);
 
-                    File file = new File(partDirectory, new String(nameBytes, UTF_8));
-                    try {
-                        file.createNewFile();
-                    }
-                    catch (IOException e) {
-                        logger.error(e, "Error while creating part file");
-                    }
+                    file = new File(partDirectory, new String(nameBytes, UTF_8));
+                    file.createNewFile();
 
                     byte[] lengthArr = new byte[8];
                     inputStream.read(lengthArr);
@@ -173,7 +169,12 @@ public class RecoveryManager
                 logger.debug("Recovered part %s.%s.%s", summary.database, summary.table, summary.part);
             }
             catch (IOException e) {
-                logger.error(e);
+                if(file != null) {
+                    logger.error(e, "Error while dealing with file %s", file.getAbsolutePath());
+                } else {
+                    logger.error(e);
+                }
+
                 deleteAllFiles(partDirectory.toPath());
             }
             finally {
