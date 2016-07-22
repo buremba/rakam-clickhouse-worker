@@ -111,7 +111,7 @@ public class MetastoreWorkerManager
         List<Shard> shards = describeStreamResult.getStreamDescription().getShards();
 
         for (Shard shard : shards) {
-            if (activeShards.contains(shard)) {
+            if (!activeShards.add(shard.getShardId())) {
                 continue;
             }
 
