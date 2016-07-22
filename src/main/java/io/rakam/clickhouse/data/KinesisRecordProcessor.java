@@ -21,6 +21,7 @@ import io.rakam.clickhouse.BasicMemoryBuffer;
 import io.rakam.clickhouse.RetryDriver;
 import io.rakam.clickhouse.StreamConfig;
 import io.rakam.clickhouse.MetastoreWorkerManager;
+import io.rakam.clickhouse.data.MessageTransformer.ZeroCopyByteArrayOutputStream;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
@@ -35,11 +36,13 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static io.airlift.http.client.StringResponseHandler.createStringResponseHandler;
 import static java.lang.String.format;
@@ -88,7 +91,7 @@ public class KinesisRecordProcessor
                 int size = streamBuffer.getRecords().size();
                 logger.info("Flushing %s records", size);
 
-                Map<ProjectCollection, Map.Entry<List<SchemaField>, MessageTransformer.ZeroCopyByteArrayOutputStream>> pages;
+                Map<ProjectCollection, Map.Entry<List<SchemaField>, ZeroCopyByteArrayOutputStream>> pages;
                 try {
                     pages = context.convert(streamBuffer.getRecords());
                 }
@@ -98,7 +101,7 @@ public class KinesisRecordProcessor
 
                 streamBuffer.clear();
 
-                for (Map.Entry<ProjectCollection, Map.Entry<List<SchemaField>, MessageTransformer.ZeroCopyByteArrayOutputStream>> entry : pages.entrySet()) {
+                for (Map.Entry<ProjectCollection, Map.Entry<List<SchemaField>, ZeroCopyByteArrayOutputStream>> entry : pages.entrySet()) {
                     try {
                         RetryDriver.retry()
                                 .run("insert", (Callable<Void>) () -> {
@@ -125,7 +128,7 @@ public class KinesisRecordProcessor
         }
     }
 
-    private void executeRequest(ProjectCollection key, List<SchemaField> fields, MessageTransformer.ZeroCopyByteArrayOutputStream value, CompletableFuture<Void> future)
+    private void executeRequest(ProjectCollection key, List<SchemaField> fields, ZeroCopyByteArrayOutputStream value, CompletableFuture<Void> future)
     {
         String columns = fields.stream().map(e -> checkTableColumn(e.getName(), '`')).collect(Collectors.joining(", "));
 
@@ -150,12 +153,13 @@ public class KinesisRecordProcessor
                     boolean tableMissing = stringResponse.getBody().contains("Code: 60");
                     boolean columnMissing = stringResponse.getBody().contains("Code: 16");
                     if (tableMissing || columnMissing) {
-                        List<SchemaField> missingColumns = new ClickHouseQueryExecution(config,
+                        Set<String> existingColumns = new ClickHouseQueryExecution(config,
                                 String.format("SELECT name FROM system.columns WHERE database = '%s' AND table = '%s'", key.project,
                                         ValidationUtil.checkLiteral(key.collection))).getResult().join().getResult().stream()
-                                .map(e -> e.get(0).toString())
-                                .filter(e -> fields.stream().noneMatch(a -> a.getName().equals(e)))
-                                .map(e -> fields.stream().filter(a -> a.getName().equals(e)).findAny().get())
+                                .map(e -> e.get(0).toString()).collect(Collectors.toSet());
+
+                        List<SchemaField> missingColumns = fields.stream()
+                                .filter(e -> !existingColumns.contains(e.getName()))
                                 .collect(Collectors.toList());
 
                         MetastoreWorkerManager.alterTable(config, key, missingColumns);

@@ -65,7 +65,7 @@ public class MessageTransformer
 
             ByteArrayBackedLittleEndianDataOutputStream output = table.get(collection);
             if (output == null) {
-                ZeroCopyByteArrayOutputStream out = new ZeroCopyByteArrayOutputStream(records.size() * 100);
+                ZeroCopyByteArrayOutputStream out = new ZeroCopyByteArrayOutputStream(1000);
                 output = new ByteArrayBackedLittleEndianDataOutputStream(out);
                 table.put(collection, output);
             }
