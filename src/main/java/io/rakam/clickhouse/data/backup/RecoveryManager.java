@@ -144,7 +144,7 @@ public class RecoveryManager
                     inputStream.read(bytes);
                     int nameLength = Ints.fromByteArray(bytes);
 
-                    if(nameLength <= 0) {
+                    if(nameLength <= 0 || nameLength > 500) {
                         logger.error("Invalid format for part %s. Key: %s", summary.toString(), key);
                         amazonS3Client.deleteObject(backupConfig.getBucket(), key);
                         return;
@@ -153,7 +153,7 @@ public class RecoveryManager
                     byte[] nameBytes = new byte[nameLength];
                     inputStream.read(nameBytes);
                     String fileName = new String(nameBytes, UTF_8);
-                    if(!fileName.endsWith(".mrk") && !fileName.endsWith(".bin") && !fileName.equals("checksums.txt") && !fileName.equals("columns.txt")) {
+                    if(!fileName.endsWith(".mrk") && !fileName.endsWith(".bin") && !fileName.equals("checksums.txt") && !fileName.equals("columns.txt") && !fileName.equals("primary.idx")) {
                         logger.error("Invalid filename format for part %s. Key %s", summary.toString(), key);
                         amazonS3Client.deleteObject(backupConfig.getBucket(), key);
                     }
