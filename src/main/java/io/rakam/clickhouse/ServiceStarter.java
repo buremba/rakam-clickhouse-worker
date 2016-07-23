@@ -76,7 +76,7 @@ public class ServiceStarter
             try {
                 new HttpServerBuilder().setHttpServices(
                         ImmutableSet.of(service)).build()
-                        .bind("0.0.0.0", config.getPort());
+                        .bindAwait("0.0.0.0", config.getPort());
             }
             catch (InterruptedException e) {
                 throw Throwables.propagate(e);

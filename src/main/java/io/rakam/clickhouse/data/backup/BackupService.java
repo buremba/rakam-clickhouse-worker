@@ -119,7 +119,7 @@ public class BackupService
                                 @Override
                                 public Boolean apply(List<Object> objects)
                                 {
-                                    return objects.get(3).equals(TRUE);
+                                    return !objects.get(3).equals(0);
                                 }
                             }));
 
