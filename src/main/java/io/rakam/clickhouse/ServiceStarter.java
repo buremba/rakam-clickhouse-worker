@@ -16,6 +16,7 @@ import io.rakam.clickhouse.data.backup.RecoveryManager;
 import org.rakam.aws.AWSConfig;
 import org.rakam.aws.dynamodb.metastore.DynamodbMetastoreConfig;
 import org.rakam.clickhouse.ClickHouseConfig;
+import org.rakam.server.http.HttpServer;
 import org.rakam.server.http.HttpServerBuilder;
 import org.rakam.server.http.HttpService;
 
@@ -74,9 +75,9 @@ public class ServiceStarter
         protected void setup()
         {
             try {
-                new HttpServerBuilder().setHttpServices(
-                        ImmutableSet.of(service)).build()
-                        .bindAwait("0.0.0.0", config.getPort());
+                HttpServer build = new HttpServerBuilder().setHttpServices(
+                        ImmutableSet.of(service)).build();
+                build.bind("0.0.0.0", config.getPort());
             }
             catch (InterruptedException e) {
                 throw Throwables.propagate(e);
