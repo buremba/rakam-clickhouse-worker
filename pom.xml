@@ -18,7 +18,7 @@
         <air.version>0.127</air.version>
         <dep.slice.version>0.19</dep.slice.version>
         <air.check.skip-license>true</air.check.skip-license>
-        <netty.rest.version>0.63</netty.rest.version>
+        <netty.rest.version>0.65</netty.rest.version>
         <air.check.skip-pmd>true</air.check.skip-pmd>
         <!-- fails -->
         <air.check.skip-findbugs>true</air.check.skip-findbugs>
